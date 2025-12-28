@@ -28,8 +28,8 @@
 /fastapi/.venv
 /laravel/node_modules
 /laravel/vendor
+# ML Models (InsightFace, EasyOCR) - игнорируем полностью
 /fastapi/models/
-/fastapi/models/models/
 
 # IDE
 .idea/
