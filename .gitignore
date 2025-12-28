@@ -24,6 +24,12 @@
 /fastapi/.pytest_cache/
 /fastapi/.mypy_cache/
 /fastapi/.ruff_cache/
+/laravel/storage/public/events
+/fastapi/.venv
+/laravel/node_modules
+/laravel/vendor
+/fastapi/models/
+/fastapi/models/models/
 
 # IDE
 .idea/
@@ -31,7 +37,9 @@
 *.swp
 *.swo
 *~
-
+*.sh
+project.md
+update.md
 # OS
 .DS_Store
 Thumbs.db
