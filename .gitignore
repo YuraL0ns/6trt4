@@ -1,0 +1,51 @@
+# Laravel
+/laravel/vendor/
+/laravel/node_modules/
+/laravel/.env
+/laravel/.env.backup
+/laravel/.phpunit.result.cache
+/laravel/storage/*.key
+/laravel/storage/logs/*
+/laravel/storage/framework/cache/*
+/laravel/storage/framework/sessions/*
+/laravel/storage/framework/views/*
+/laravel/bootstrap/cache/*
+/laravel/public/hot
+/laravel/public/storage
+/laravel/public/build
+
+# FastAPI
+/fastapi/venv/
+/fastapi/__pycache__/
+/fastapi/*.pyc
+/fastapi/*.pyo
+/fastapi/*.pyd
+/fastapi/.env
+/fastapi/.pytest_cache/
+/fastapi/.mypy_cache/
+/fastapi/.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads
+/laravel/storage/app/public/uploads/*
+!/laravel/storage/app/public/uploads/.gitkeep
+/fastapi/uploads/*
+!/fastapi/uploads/.gitkeep
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+

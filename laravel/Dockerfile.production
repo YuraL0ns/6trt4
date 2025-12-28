@@ -1,0 +1,174 @@
+FROM php:8.3-fpm
+
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libwebp-dev \
+    libonig-dev \
+    libxml2-dev \
+    libpq-dev \
+    libicu-dev \
+    zip \
+    unzip \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install pdo_pgsql pgsql mbstring exif pcntl bcmath gd opcache \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Установка Node.js и npm для сборки фронтенда
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g npm@latest \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Установка Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Настройка PHP-FPM
+RUN sed -i 's/listen = \/run\/php\/php8.3-fpm.sock/listen = 9000/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/;listen.owner = www-data/listen.owner = www-data/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/;listen.group = www-data/listen.group = www-data/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/user = www-data/user = www-data/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/group = www-data/group = www-data/' /usr/local/etc/php-fpm.d/www.conf
+
+# Настройка OPcache для production
+RUN echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.memory_consumption=256" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.interned_strings_buffer=16" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.max_accelerated_files=20000" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.save_comments=1" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.fast_shutdown=1" >> /usr/local/etc/php/conf.d/opcache.ini
+
+# Рабочая директория
+WORKDIR /var/www/html
+
+# Копирование файлов
+COPY . .
+
+# Копирование PHP конфигурации
+COPY php.ini /usr/local/etc/php/conf.d/uploads.ini
+
+# Права доступа
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html/storage \
+    && chmod -R 755 /var/www/html/bootstrap/cache
+
+# Создаем entrypoint скрипт для установки прав при запуске
+# Используем heredoc для избежания проблем с экранированием
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Удаляем папку events перед запуском (если требуется очистка)
+if [ "${CLEAR_EVENTS_ON_START:-false}" = "true" ]; then
+    if [ -d "/var/www/html/storage/app/public/events" ]; then
+        echo "Clearing events directory..."
+        rm -rf /var/www/html/storage/app/public/events/*
+        echo "Events directory cleared"
+    fi
+fi
+
+# Устанавливаем права на директории при запуске контейнера
+if [ -d "/var/www/html/storage" ]; then
+    chown -R www-data:www-data /var/www/html/storage
+    find /var/www/html/storage -type d -exec chmod 755 {} \;
+    find /var/www/html/storage -type f -exec chmod 644 {} \;
+    # Создаем директории для событий если их нет
+    mkdir -p /var/www/html/storage/app/public/events
+    chmod -R 755 /var/www/html/storage/app/public/events
+fi
+
+if [ -d "/var/www/html/bootstrap/cache" ]; then
+    chown -R www-data:www-data /var/www/html/bootstrap/cache
+    chmod -R 755 /var/www/html/bootstrap/cache
+fi
+
+# Генерируем APP_KEY если его нет в .env
+if [ -f "/var/www/html/.env" ]; then
+    if ! grep -q "^APP_KEY=base64:" /var/www/html/.env; then
+        echo "Generating APP_KEY..."
+        cd /var/www/html && php artisan key:generate --force || true
+    fi
+    
+    # Обновляем настройки БД из переменных окружения Docker (если они установлены)
+    # Это гарантирует, что Laravel использует правильные настройки из docker-compose
+    if [ -n "$DB_CONNECTION" ]; then
+        if grep -q "^DB_CONNECTION=" /var/www/html/.env; then
+            sed -i "s|^DB_CONNECTION=.*|DB_CONNECTION=$DB_CONNECTION|" /var/www/html/.env
+        else
+            echo "DB_CONNECTION=$DB_CONNECTION" >> /var/www/html/.env
+        fi
+    fi
+    
+    if [ -n "$DB_HOST" ]; then
+        if grep -q "^DB_HOST=" /var/www/html/.env; then
+            sed -i "s|^DB_HOST=.*|DB_HOST=$DB_HOST|" /var/www/html/.env
+        else
+            echo "DB_HOST=$DB_HOST" >> /var/www/html/.env
+        fi
+    fi
+    
+    if [ -n "$DB_PORT" ]; then
+        if grep -q "^DB_PORT=" /var/www/html/.env; then
+            sed -i "s|^DB_PORT=.*|DB_PORT=$DB_PORT|" /var/www/html/.env
+        else
+            echo "DB_PORT=$DB_PORT" >> /var/www/html/.env
+        fi
+    fi
+    
+    if [ -n "$DB_DATABASE" ]; then
+        if grep -q "^DB_DATABASE=" /var/www/html/.env; then
+            sed -i "s|^DB_DATABASE=.*|DB_DATABASE=$DB_DATABASE|" /var/www/html/.env
+        else
+            echo "DB_DATABASE=$DB_DATABASE" >> /var/www/html/.env
+        fi
+    fi
+    
+    if [ -n "$DB_USERNAME" ]; then
+        if grep -q "^DB_USERNAME=" /var/www/html/.env; then
+            sed -i "s|^DB_USERNAME=.*|DB_USERNAME=$DB_USERNAME|" /var/www/html/.env
+        else
+            echo "DB_USERNAME=$DB_USERNAME" >> /var/www/html/.env
+        fi
+    fi
+    
+    if [ -n "$DB_PASSWORD" ]; then
+        # Используем более простой способ - удаляем строку и добавляем заново
+        # Это избегает проблем с экранированием спецсимволов в sed
+        if grep -q "^DB_PASSWORD=" /var/www/html/.env; then
+            sed -i '/^DB_PASSWORD=/d' /var/www/html/.env
+        fi
+        echo "DB_PASSWORD=$DB_PASSWORD" >> /var/www/html/.env
+        echo "[Entrypoint] Updated DB_PASSWORD in .env file"
+    else
+        echo "[Entrypoint] WARNING: DB_PASSWORD is not set!"
+    fi
+    
+    # Проверяем, что пароль действительно обновлен
+    if [ -n "$DB_PASSWORD" ]; then
+        ENV_PASSWORD=$(grep "^DB_PASSWORD=" /var/www/html/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        if [ "$ENV_PASSWORD" != "$DB_PASSWORD" ]; then
+            echo "[Entrypoint] WARNING: Password in .env does not match DB_PASSWORD from environment!"
+            echo "[Entrypoint] Attempting to fix..."
+            sed -i '/^DB_PASSWORD=/d' /var/www/html/.env
+            echo "DB_PASSWORD=$DB_PASSWORD" >> /var/www/html/.env
+            echo "[Entrypoint] Password re-written to .env"
+        else
+            echo "[Entrypoint] Password in .env matches environment variable"
+        fi
+    fi
+fi
+
+# Запускаем основную команду
+exec "$@"
+EOF
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["php-fpm"]
+

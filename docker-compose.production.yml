@@ -1,0 +1,203 @@
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:16
+    container_name: hunter-photo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-hunter_photo}
+      POSTGRES_USER: ${DB_USERNAME:-hunter_photo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hunter-photo-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-hunter_photo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: postgres -c max_connections=200
+
+  # Redis для Celery
+  redis:
+    image: redis:7-alpine
+    container_name: hunter-photo-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - hunter-photo-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  # Laravel приложение
+  laravel:
+    build:
+      context: ./laravel
+      dockerfile: Dockerfile.production
+    container_name: hunter-photo-laravel
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./laravel:/var/www/html
+      - laravel_storage:/var/www/html/storage
+      - laravel_vendor:/var/www/html/vendor
+      - ./laravel/storage/app/public/events:/var/www/html/storage/app/public/events:rw
+    environment:
+      CLEAR_EVENTS_ON_START: ${CLEAR_EVENTS_ON_START:-false}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-hunter_photo}
+      DB_USERNAME: ${DB_USERNAME:-hunter_photo}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      APP_ENV: production
+      APP_DEBUG: ${APP_DEBUG:-false}
+      # APP_KEY не передаем через переменные окружения, Laravel должен читать его из laravel/.env
+      # APP_KEY: ${APP_KEY}
+      APP_URL: ${APP_URL:-https://hunter-photo.ru}
+      FASTAPI_URL: http://fastapi:8000
+      FASTAPI_TIMEOUT: 300
+      YOO_KASSA_SHOP_ID: ${YOO_KASSA_SHOP_ID}
+      YOO_KASSA_SECRET_KEY: ${YOO_KASSA_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hunter-photo-network
+    command: >
+      sh -c "
+        # Ждем, пока entrypoint обновит .env файл
+        sleep 5 &&
+        # Очищаем кеши перед проверкой подключения
+        php artisan config:clear || true &&
+        php artisan cache:clear || true &&
+        # Ждем готовности PostgreSQL (проверяем подключение с таймаутом)
+        for i in 1 2 3 4 5; do
+          php artisan db:show > /dev/null 2>&1 && break || sleep 2
+        done &&
+        # Если подключение не удалось, выводим ошибку но продолжаем
+        php artisan db:show || echo 'WARNING: Database connection check failed, but continuing...' &&
+        composer install --no-dev --optimize-autoloader &&
+        php artisan config:cache &&
+        php artisan route:cache &&
+        php artisan view:cache &&
+        # Выполняем миграции только если подключение работает
+        (php artisan migrate --force || echo 'WARNING: Migrations failed, but continuing...') &&
+        php artisan storage:link &&
+        php-fpm
+      "
+
+  # Nginx для Laravel
+  nginx:
+    image: nginx:alpine
+    container_name: hunter-photo-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "443:443"
+    volumes:
+      - ./laravel:/var/www/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - laravel
+    networks:
+      - hunter-photo-network
+
+  # FastAPI приложение (внутренний доступ)
+  fastapi:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    container_name: hunter-photo-fastapi
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./fastapi:/app
+      - fastapi_uploads:/app/uploads
+      - shared_storage:/shared
+      - ./laravel/storage/app/public/events:/var/www/html/storage/app/public/events:rw
+      - ./laravel/storage:/var/www/html/storage:rw
+    environment:
+      DATABASE_URL: postgresql://${DB_USERNAME:-hunter_photo}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-hunter_photo}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      ENVIRONMENT: production
+      S3_CLOUD_URL: ${S3_CLOUD_URL}
+      S3_CLOUD_ACCESS_KEY: ${S3_CLOUD_ACCESS_KEY}
+      S3_CLOUD_SECRET_KEY: ${S3_CLOUD_SECRET_KEY}
+      S3_CLOUD_REGION: ${S3_CLOUD_REGION}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hunter-photo-network
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+
+  # Celery Worker
+  celery:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    container_name: hunter-photo-celery
+    restart: unless-stopped
+    working_dir: /app
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./fastapi:/app
+      - fastapi_uploads:/app/uploads
+      - shared_storage:/shared
+      - ./laravel/storage/app/public/events:/var/www/html/storage/app/public/events:rw
+      - ./laravel/storage:/var/www/html/storage:rw
+    environment:
+      DATABASE_URL: postgresql://${DB_USERNAME:-hunter_photo}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-hunter_photo}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      ENVIRONMENT: production
+      S3_CLOUD_URL: ${S3_CLOUD_URL}
+      S3_CLOUD_ACCESS_KEY: ${S3_CLOUD_ACCESS_KEY}
+      S3_CLOUD_SECRET_KEY: ${S3_CLOUD_SECRET_KEY}
+      S3_CLOUD_REGION: ${S3_CLOUD_REGION}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+    depends_on:
+      - postgres
+      - redis
+      - fastapi
+    networks:
+      - hunter-photo-network
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4 --queues=celery,high_priority,default,low_priority
+
+volumes:
+  postgres_data:
+  redis_data:
+  laravel_storage:
+  laravel_vendor:
+  fastapi_uploads:
+  shared_storage:
+  nginx_logs:
+
+networks:
+  hunter-photo-network:
+    driver: bridge
+
