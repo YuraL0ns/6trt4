@@ -22,9 +22,15 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=7200,  # 2 часа (увеличено для больших событий)
     task_soft_time_limit=6900,  # 1 час 55 минут (увеличено)
+    
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем solo pool вместо prefork
+    # InsightFace, OpenCV и ONNX Runtime не работают с prefork
+    # solo = один процесс, один поток (безопасно для ML библиотек)
+    worker_pool='solo',  # ВАЖНО: solo вместо prefork для ML библиотек
+    
     worker_prefetch_multiplier=1,  # Обрабатываем по одной задаче за раз для балансировки
-    worker_max_tasks_per_child=200,  # Увеличено до 200 задач (было 50) - для длительных задач обработки событий
-    worker_max_memory_per_child=2048000,  # 2GB лимит памяти на worker (в килобайтах)
+    # worker_max_tasks_per_child не используется с solo pool
+    # worker_max_memory_per_child не используется с solo pool
     
     # Оптимизация для балансировки нагрузки
     task_acks_late=True,  # Подтверждаем задачу только после выполнения (предотвращает потерю задач)

@@ -3,9 +3,17 @@ import numpy as np
 import cv2
 import os
 import pickle
+import sys
+import warnings
 from typing import List, Optional, Tuple, Dict
 from app.config import settings
 import logging
+
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Подавляем FutureWarning от InsightFace
+# Эти предупреждения генерируются внутри библиотеки и не влияют на функциональность
+warnings.filterwarnings('ignore', category=FutureWarning, module='insightface.*')
+warnings.filterwarnings('ignore', message='.*rcond parameter.*', category=FutureWarning)
+warnings.filterwarnings('ignore', message='.*estimate is deprecated.*', category=FutureWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +24,18 @@ _face_recognition_instance = None
 def get_face_recognition():
     """Получить singleton экземпляр FaceRecognition"""
     global _face_recognition_instance
+    import os
+    pid = os.getpid()
+    
+    logger.error(f"get_face_recognition() CALLED PID={pid} instance_exists={_face_recognition_instance is not None}")
+    
     if _face_recognition_instance is None:
+        logger.error(f"get_face_recognition() - Creating new FaceRecognition instance PID={pid}")
         _face_recognition_instance = FaceRecognition()
+        logger.error(f"get_face_recognition() - FaceRecognition instance created successfully PID={pid}")
+    else:
+        logger.error(f"get_face_recognition() - Using existing FaceRecognition instance PID={pid}")
+    
     return _face_recognition_instance
 
 
@@ -25,15 +43,44 @@ class FaceRecognition:
     """Распознавание лиц с помощью InsightFace"""
     
     def __init__(self):
+        # КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ: Логируем окружение для диагностики
+        import os
+        pid = os.getpid()
+        cwd = os.getcwd()
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем абсолютный путь для моделей
+        # В Docker контейнере модели должны быть в /app/models
+        if settings.INSIGHTFACE_MODEL_PATH:
+            model_path = settings.INSIGHTFACE_MODEL_PATH
+        else:
+            # Проверяем несколько возможных путей
+            possible_paths = [
+                '/app/models',  # Docker контейнер (Celery и FastAPI)
+                './models',  # Локальная разработка
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models'),  # Относительный путь
+            ]
+            model_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    model_path = path
+                    break
+            if not model_path:
+                model_path = '/app/models'  # Fallback на стандартный путь в Docker
+        
+        logger.error(f"INSIGHTFACE INIT PID={pid} CWD={cwd} MODEL_PATH={model_path}")
+        logger.error(f"INSIGHTFACE INIT - Python path (first 3): {sys.path[:3]}")
+        logger.error(f"INSIGHTFACE INIT - Model path absolute: {os.path.abspath(model_path)}")
+        logger.error(f"INSIGHTFACE INIT - Model path exists: {os.path.exists(model_path)}")
+        
         # Загружаем модель InsightFace - используем более легковесную модель antelopev2
         # antelopev2 легче чем buffalo_l, но все еще хорошо распознает лица
         # Альтернативы: 'buffalo_s' (еще легче, но менее точная) или 'antelopev2' (баланс)
-        model_path = settings.INSIGHTFACE_MODEL_PATH or './models'
         
         # Проверяем, что директория существует
         if not os.path.exists(model_path):
             os.makedirs(model_path, exist_ok=True)
             logger.info(f"Created model directory: {model_path}")
+        
+        logger.error(f"INSIGHTFACE INIT - Model directory exists: {os.path.exists(model_path)}, absolute path: {os.path.abspath(model_path)}")
         
         # Список моделей для попытки загрузки (от легкой к тяжелой)
         models_to_try = ['buffalo_s', 'antelopev2', 'buffalo_l']
@@ -51,7 +98,9 @@ class FaceRecognition:
                 # det_size=(640, 640) - базовый размер, можно увеличить до (1280, 1280) для больших изображений
                 # Но это увеличит время обработки, поэтому используем баланс
                 # КРИТИЧНО: ctx_id=-1 для CPU (ctx_id=0 для GPU, но GPU может не быть)
+                logger.error(f"INSIGHTFACE INIT - Preparing model {model_name} with ctx_id=-1, det_size=(640, 640)")
                 self.model.prepare(ctx_id=-1, det_size=(640, 640))
+                logger.error(f"INSIGHTFACE INIT - Model {model_name} prepared successfully")
                 logger.info(f"FaceRecognition initialized successfully with {model_name} model")
                 break
             except AssertionError as e:
@@ -68,8 +117,14 @@ class FaceRecognition:
         # Если ни одна модель не загрузилась, выбрасываем исключение
         if self.model is None:
             error_msg = f"Failed to load any InsightFace model. Last error: {str(last_error)}"
-            logger.error(error_msg)
+            logger.error(f"INSIGHTFACE INIT - FAILED: {error_msg}")
+            logger.error(f"INSIGHTFACE INIT - Tried models: {models_to_try}")
+            logger.error(f"INSIGHTFACE INIT - Model path: {model_path}, exists: {os.path.exists(model_path)}")
             raise RuntimeError(error_msg)
+        
+        logger.error(f"INSIGHTFACE INIT - SUCCESS: Model loaded and ready, PID={os.getpid()}")
+        
+        logger.error(f"INSIGHTFACE INIT - SUCCESS: Model loaded and ready, PID={os.getpid()}")
     
     def _prepare_image(self, img: np.ndarray) -> np.ndarray:
         """
@@ -155,17 +210,43 @@ class FaceRecognition:
         bbox: [x1, y1, x2, y2] - координаты bounding box
         """
         try:
-            logger.debug(f"Extracting faces from: {image_path}")
+            logger.info(f"Extracting faces from: {image_path}")
+            logger.info(f"Image file exists: {os.path.exists(image_path)}, size: {os.path.getsize(image_path) if os.path.exists(image_path) else 0} bytes")
             
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем файл через PIL для диагностики
+            try:
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(image_path)
+                logger.info(f"PIL image info: size={pil_img.size}, mode={pil_img.mode}, format={pil_img.format}")
+                pil_img.close()
+            except Exception as pil_error:
+                logger.warning(f"PIL failed to open image: {str(pil_error)}")
+            
+            # Читаем через OpenCV
             img = cv2.imread(image_path)
             if img is None:
-                logger.warning(f"Failed to load image: {image_path}")
-                return []
+                logger.error(f"Failed to load image with cv2.imread: {image_path}")
+                # Пробуем альтернативный способ чтения через PIL
+                try:
+                    import numpy as np
+                    from PIL import Image as PILImage
+                    pil_img = PILImage.open(image_path)
+                    # Конвертируем PIL в numpy array для OpenCV
+                    img = np.array(pil_img)
+                    # Если изображение в RGB, конвертируем в BGR для OpenCV
+                    if len(img.shape) == 3 and img.shape[2] == 3:
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    logger.info(f"Successfully loaded image via PIL fallback, shape: {img.shape}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback loading also failed: {str(fallback_error)}")
+                    return []
+            
+            logger.info(f"cv2.imread successful: shape={img.shape}, dtype={img.dtype}")
             
             # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №2: Подготавливаем изображение (BGR→RGB, resize)
             img = self._prepare_image(img)
             
-            logger.info(f"Image loaded: shape={img.shape}, dtype={img.dtype}")
+            logger.info(f"Image after preparation: shape={img.shape}, dtype={img.dtype}")
             
             # Проверяем размер изображения
             if img.shape[0] < 100 or img.shape[1] < 100:
@@ -176,22 +257,47 @@ class FaceRecognition:
                 logger.error("FaceRecognition model is not initialized")
                 return []
             
+            # КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ: Запуск InsightFace
+            logger.info("=" * 60)
+            logger.info("ЗАПУСК INSIGHTFACE - Начало анализа")
+            logger.info(f"Image path: {image_path}")
+            logger.info(f"Image shape: {img.shape}, dtype: {img.dtype}")
+            logger.info("=" * 60)
+            
             # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №5: Убран ThreadPoolExecutor
             # InsightFace не thread-safe, onnxruntime может зависать в thread'ах
             try:
+                import time
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: os уже импортирован глобально, не импортируем локально
+                # Локальный import создает UnboundLocalError для использования os выше
+                pid = os.getpid()
+                insightface_start = time.time()
+                logger.error(f"GET FACES PID={pid} IMG_SHAPE={img.shape} IMG_DTYPE={img.dtype}")
+                logger.info("INSIGHTFACE АНАЛИЗ - Вызов model.get()...")
+                
                 faces = self.model.get(img)
+                
+                insightface_elapsed = time.time() - insightface_start
+                logger.info(f"INSIGHTFACE АНАЛИЗ - model.get() завершен за {insightface_elapsed:.2f} секунд")
+                
                 if faces:
-                    logger.info(f"Found {len(faces)} raw face(s) from InsightFace")
+                    logger.info(f"INSIGHTFACE АНАЛИЗ - Найдено {len(faces)} сырых лиц (raw faces)")
                 else:
-                    logger.info("No raw faces found from InsightFace")
+                    logger.info("INSIGHTFACE АНАЛИЗ - Сырых лиц не найдено (no raw faces)")
             except Exception as e:
-                logger.error(f"Error in InsightFace model.get: {str(e)}", exc_info=True)
+                logger.error(f"INSIGHTFACE АНАЛИЗ - Ошибка в model.get(): {str(e)}", exc_info=True)
+                logger.error("=" * 60)
+                logger.error("INSIGHTFACE - Анализ завершен с ошибкой")
+                logger.error("=" * 60)
                 return []
             
             result = []
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №6: min_det_score = 0.35 (было 0.2)
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №6: min_det_score = 0.3 (было 0.35, снижено для лучшего обнаружения)
             # embeddings с плохих детекций → мусор, потом cosine distance не проходит
-            min_det_score = 0.35  # Минимальный порог confidence для детекции лиц
+            # Но слишком высокий порог может пропускать лица
+            min_det_score = 0.3  # Минимальный порог confidence для детекции лиц
+            
+            logger.info(f"INSIGHTFACE АНАЛИЗ - Фильтрация лиц с min_det_score={min_det_score}, всего сырых лиц: {len(faces)}")
             
             for idx, face in enumerate(faces):
                 try:
@@ -219,12 +325,17 @@ class FaceRecognition:
                         'det_score': det_score
                     })
                     
-                    logger.info(f"Face {idx + 1} added: embedding shape={face.embedding.shape}, bbox={bbox}, det_score={det_score:.3f}")
+                    logger.info(f"INSIGHTFACE АНАЛИЗ - Лицо {idx + 1} добавлено: embedding shape={face.embedding.shape}, bbox={bbox}, det_score={det_score:.3f}")
                 except Exception as e:
-                    logger.error(f"Error processing face {idx + 1}: {str(e)}", exc_info=True)
+                    logger.error(f"INSIGHTFACE АНАЛИЗ - Ошибка обработки лица {idx + 1}: {str(e)}", exc_info=True)
                     continue
             
-            logger.info(f"Successfully extracted {len(result)} face(s) from {image_path} after filtering")
+            logger.info("=" * 60)
+            logger.info(f"INSIGHTFACE - Анализ завершен успешно")
+            logger.info(f"Найдено лиц после фильтрации: {len(result)} из {len(faces)} сырых")
+            logger.info(f"Image path: {image_path}")
+            logger.info("=" * 60)
+            
             return result
         except Exception as e:
             logger.error(f"Error extracting faces with bboxes from {image_path}: {str(e)}", exc_info=True)

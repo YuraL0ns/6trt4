@@ -245,6 +245,16 @@
         @endif
     </div>
 
+    <!-- Блок результатов поиска (создается динамически) -->
+    <div id="search-results-section" class="hidden mb-6">
+        <x-card>
+            <h2 class="text-2xl font-bold text-white mb-4">Результаты поиска</h2>
+            <div id="search-results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                <!-- Результаты будут добавлены динамически -->
+            </div>
+        </x-card>
+    </div>
+
     <!-- Модальное окно просмотра фотографии -->
     <x-modal id="photo-modal" title="Просмотр фотографии" size="lg">
         <div class="relative">
@@ -479,10 +489,125 @@ function addToCart(photoId) {
     });
 }
 
-function findSimilar(photoId, type) {
-    // Реализация поиска похожих фотографий
-    // TODO: Реализовать поиск по существующей фотографии
-    alert('Функция поиска по существующей фотографии будет реализована позже');
+// Поиск похожих фотографий по существующей фотографии
+async function findSimilar(photoId, type) {
+    console.log(`findSimilar called: photoId=${photoId}, type=${type}`);
+    
+    const eventSlug = '{{ $event->slug ?? $event->id }}';
+    const messageDiv = document.getElementById('face-search-message');
+    const statusDiv = document.getElementById('face-search-status');
+    const progressDiv = document.getElementById('face-search-progress');
+    const progressBar = document.getElementById('face-search-progress-bar');
+    
+    // Очищаем предыдущие результаты
+    clearSearchResults();
+    
+    // Показываем статус поиска
+    if (statusDiv) {
+        statusDiv.classList.remove('hidden');
+    }
+    if (messageDiv) {
+        messageDiv.textContent = type === 'face' ? 'Поиск похожих фотографий по лицу...' : 'Поиск похожих фотографий по номеру...';
+        messageDiv.classList.remove('text-red-400', 'text-yellow-400', 'text-green-400');
+        messageDiv.classList.add('text-yellow-400');
+    }
+    if (progressDiv) {
+        progressDiv.classList.remove('hidden');
+        if (progressBar) {
+            progressBar.style.width = '10%';
+        }
+    }
+    
+    try {
+        // Получаем URL фотографии для отправки
+        const photoResponse = await fetch(`/events/${eventSlug}/photo/${photoId}`, {
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        
+        if (!photoResponse.ok) {
+            throw new Error('Не удалось загрузить фотографию');
+        }
+        
+        const photoData = await photoResponse.json();
+        const photoUrl = photoData.url || photoData.fallback_url;
+        
+        if (!photoUrl) {
+            throw new Error('Не удалось получить URL фотографии');
+        }
+        
+        // Загружаем изображение как Blob
+        const imageResponse = await fetch(photoUrl);
+        const imageBlob = await imageResponse.blob();
+        
+        // Создаем FormData для отправки
+        const formData = new FormData();
+        formData.append('photo', imageBlob, `photo_${photoId}.jpg`);
+        formData.append('type', type);
+        formData.append('_token', document.querySelector('input[name="_token"]').value);
+        
+        if (progressBar) {
+            progressBar.style.width = '30%';
+        }
+        
+        // Отправляем запрос на поиск
+        const searchResponse = await fetch(`{{ route("events.find-similar", $event->slug ?? $event->id) }}`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        
+        if (!searchResponse.ok) {
+            const errorData = await searchResponse.json().catch(() => ({ error: 'Ошибка при выполнении поиска' }));
+            throw new Error(errorData.error || 'Ошибка при выполнении поиска');
+        }
+        
+        const searchData = await searchResponse.json();
+        
+        if (progressBar) {
+            progressBar.style.width = '50%';
+        }
+        
+        if (searchData.status === 'processing' && searchData.task_id) {
+            // Задача запущена асинхронно, нужно опрашивать статус
+            if (messageDiv) {
+                messageDiv.textContent = 'Поиск выполняется, пожалуйста подождите...';
+            }
+            
+            await pollSearchTask(searchData.task_id);
+        } else if (searchData.status === 'completed') {
+            // Результаты готовы сразу
+            await showSearchResults(searchData.results || [], searchData.total || 0);
+        } else {
+            throw new Error('Неизвестный статус ответа');
+        }
+    } catch (error) {
+        console.error('Ошибка поиска:', error);
+        if (messageDiv) {
+            messageDiv.textContent = 'Ошибка: ' + error.message;
+            messageDiv.classList.remove('text-yellow-400', 'text-green-400');
+            messageDiv.classList.add('text-red-400');
+        }
+        if (progressDiv) {
+            progressDiv.classList.add('hidden');
+        }
+    }
+}
+
+// Очистка результатов поиска при новом поиске
+function clearSearchResults() {
+    const searchResultsSection = document.getElementById('search-results-section');
+    if (searchResultsSection) {
+        searchResultsSection.classList.add('hidden');
+    }
+    // Сбрасываем подсветку
+    document.querySelectorAll('.photo-item').forEach(item => {
+        item.classList.remove('ring-4', 'ring-[#a78bfa]');
+    });
 }
 
 // Обработка формы поиска по селфи
@@ -508,6 +633,9 @@ document.addEventListener('DOMContentLoaded', function() {
             formData.append('photo', photoInput.files[0]);
             formData.append('type', 'face');
             formData.append('_token', document.querySelector('input[name="_token"]').value);
+            
+            // Очищаем предыдущие результаты
+            clearSearchResults();
             
             // Показываем статус
             statusDiv.classList.remove('hidden');
@@ -541,7 +669,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     await pollSearchTask(data.task_id);
                 } else if (data.status === 'completed') {
                     // Результаты готовы сразу
-                    showSearchResults(data.results || [], data.total || 0);
+                    await showSearchResults(data.results || [], data.total || 0);
                 } else {
                     throw new Error('Неизвестный статус ответа');
                 }
@@ -578,12 +706,34 @@ async function pollSearchTask(taskId) {
                 messageDiv.classList.remove('text-red-400', 'text-yellow-400');
                 messageDiv.classList.add('text-green-400');
                 
-                // Получаем результаты
-                if (data.result && data.result.results) {
-                    showSearchResults(data.result.results, data.result.total_found || 0);
+                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильно извлекаем результаты из ответа
+                // Результаты могут быть в data.results (новый формат) или data.result.results (старый формат)
+                let results = [];
+                let total = 0;
+                
+                console.log('Search task completed, data:', data);
+                
+                if (data.results && Array.isArray(data.results)) {
+                    // Новый формат: результаты напрямую в data.results
+                    results = data.results;
+                    total = data.total || data.results.length;
+                    console.log('Using new format: results from data.results, total:', total);
+                } else if (data.result && data.result.results && Array.isArray(data.result.results)) {
+                    // Старый формат: результаты в data.result.results
+                    results = data.result.results;
+                    total = data.result.total_found || data.result.total || data.result.results.length;
+                    console.log('Using old format: results from data.result.results, total:', total);
+                } else if (data.result && Array.isArray(data.result)) {
+                    // Альтернативный формат: результат - это массив
+                    results = data.result;
+                    total = data.total || data.result.length;
+                    console.log('Using alternative format: results from data.result array, total:', total);
                 } else {
-                    showSearchResults([], 0);
+                    console.warn('No results found in data:', data);
                 }
+                
+                console.log('Final results:', results, 'total:', total);
+                await showSearchResults(results, total);
                 return;
             } else if (data.status === 'failed') {
                 throw new Error(data.error || 'Задача завершилась с ошибкой');
@@ -610,15 +760,19 @@ async function pollSearchTask(taskId) {
 }
 
 // Отображение результатов поиска
-function showSearchResults(results, total) {
+async function showSearchResults(results, total) {
+    console.log('showSearchResults called with:', { results, total, resultsLength: results ? results.length : 0 });
+    
     const messageDiv = document.getElementById('face-search-message');
     const progressDiv = document.getElementById('face-search-progress');
     const progressBar = document.getElementById('face-search-progress-bar');
+    const searchResultsSection = document.getElementById('search-results-section');
+    const searchResultsGrid = document.getElementById('search-results-grid');
     
     progressBar.style.width = '100%';
     progressDiv.classList.add('hidden');
     
-    if (total === 0) {
+    if (!results || !Array.isArray(results) || results.length === 0 || total === 0) {
         messageDiv.textContent = 'Похожих фотографий не найдено';
         messageDiv.classList.remove('text-red-400', 'text-green-400');
         messageDiv.classList.add('text-yellow-400');
@@ -626,6 +780,11 @@ function showSearchResults(results, total) {
         document.querySelectorAll('.photo-item').forEach(item => {
             item.classList.remove('ring-4', 'ring-[#a78bfa]');
         });
+        // Скрываем блок результатов
+        if (searchResultsSection) {
+            searchResultsSection.classList.add('hidden');
+        }
+        console.log('No results to display');
         return;
     }
     
@@ -633,15 +792,27 @@ function showSearchResults(results, total) {
     messageDiv.classList.remove('text-red-400', 'text-yellow-400');
     messageDiv.classList.add('text-green-400');
     
-    // Получаем ID найденных фотографий
-    const foundPhotoIds = results.map(r => String(r.photo_id || r.id || '')).filter(Boolean);
+    // Получаем ID найденных фотографий (сортируем по similarity/distance)
+    const foundPhotos = results.map(r => ({
+        id: String(r.photo_id || r.id || ''),
+        distance: r.distance || 0,
+        similarity: r.similarity || (1 - (r.distance || 0))
+    })).filter(p => p.id).sort((a, b) => a.distance - b.distance); // Сортируем по distance (меньше = лучше)
     
-    // Подсвечиваем найденные фотографии
+    const foundPhotoIds = foundPhotos.map(p => p.id);
+    
+    console.log('Found photo IDs:', foundPhotoIds);
+    console.log('Total photo items on page:', document.querySelectorAll('.photo-item').length);
+    
+    // Подсвечиваем найденные фотографии в основной галерее
     let firstFound = false;
+    let highlightedCount = 0;
     document.querySelectorAll('.photo-item').forEach(item => {
         const photoId = String(item.dataset.photoId || '');
         if (foundPhotoIds.includes(photoId)) {
             item.classList.add('ring-4', 'ring-[#a78bfa]');
+            highlightedCount++;
+            console.log('Highlighted photo:', photoId);
             // Прокручиваем к первой найденной фотографии
             if (!firstFound) {
                 item.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -651,6 +822,94 @@ function showSearchResults(results, total) {
             item.classList.remove('ring-4', 'ring-[#a78bfa]');
         }
     });
+    
+    console.log(`Highlighted ${highlightedCount} photos out of ${foundPhotoIds.length} found`);
+    
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Создаем блок "Результаты поиска" с найденными фотографиями
+    if (searchResultsSection && searchResultsGrid) {
+        // Показываем блок результатов
+        searchResultsSection.classList.remove('hidden');
+        searchResultsGrid.innerHTML = '<div class="col-span-full text-center py-4"><div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#a78bfa]"></div><p class="text-gray-400 mt-2">Загрузка результатов...</p></div>';
+        
+        // Загружаем данные для каждой найденной фотографии
+        const eventSlug = '{{ $event->slug ?? $event->id }}';
+        const photoPromises = foundPhotos.map(async (photoData, index) => {
+            try {
+                const response = await fetch(`/events/${eventSlug}/photo/${photoData.id}`, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                if (!response.ok) {
+                    console.error(`Failed to load photo ${photoData.id}: ${response.status}`);
+                    return null;
+                }
+                
+                const photoInfo = await response.json();
+                return {
+                    ...photoInfo,
+                    distance: photoData.distance,
+                    similarity: photoData.similarity
+                };
+            } catch (error) {
+                console.error(`Error loading photo ${photoData.id}:`, error);
+                return null;
+            }
+        });
+        
+        // Ждем загрузки всех фотографий
+        const loadedPhotos = await Promise.all(photoPromises);
+        const validPhotos = loadedPhotos.filter(p => p !== null);
+        
+        console.log(`Loaded ${validPhotos.length} photos out of ${foundPhotos.length}`);
+        
+        // Очищаем grid и добавляем фотографии
+        searchResultsGrid.innerHTML = '';
+        
+        if (validPhotos.length === 0) {
+            searchResultsGrid.innerHTML = '<div class="col-span-full text-center py-8 text-gray-400">Не удалось загрузить фотографии</div>';
+            return;
+        }
+        
+        // Создаем элементы для каждой фотографии
+        validPhotos.forEach((photo, index) => {
+            const photoElement = document.createElement('div');
+            photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
+            photoElement.onclick = () => openPhotoModal(photo.id);
+            
+            const similarityPercent = Math.round(photo.similarity * 100);
+            const similarityColor = similarityPercent >= 80 ? 'bg-green-500' : (similarityPercent >= 60 ? 'bg-yellow-500' : 'bg-orange-500');
+            
+            photoElement.innerHTML = `
+                <img 
+                    src="${photo.url || photo.fallback_url || ''}" 
+                    alt="Photo" 
+                    class="w-full h-full object-cover group-hover:opacity-75 transition-opacity"
+                    onerror="this.onerror=null; ${photo.fallback_url && photo.fallback_url !== photo.url ? `this.src='${photo.fallback_url}';` : "this.style.display='none'; this.nextElementSibling.style.display='flex';"}"
+                >
+                <div class="w-full h-full flex items-center justify-center text-gray-500 text-xs" style="display: none;">
+                    <p>Изображение не загружено</p>
+                </div>
+                <div class="absolute top-2 left-2 ${similarityColor} text-white px-2 py-1 rounded text-xs font-semibold">
+                    ${similarityPercent}%
+                </div>
+                <div class="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
+                    <div class="opacity-0 group-hover:opacity-100 transition-opacity text-white text-center">
+                        <p class="font-semibold">${photo.price || '0'} ₽</p>
+                    </div>
+                </div>
+            `;
+            
+            searchResultsGrid.appendChild(photoElement);
+        });
+        
+        // Прокручиваем к блоку результатов
+        searchResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+        console.warn('Search results section elements not found!');
+    }
 }
 
 // Фильтрация по номерам

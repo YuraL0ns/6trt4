@@ -233,9 +233,12 @@ class S3Uploader:
                 photo = db_session.query(Photo).filter(Photo.id == photo_id).first()
                 if photo and photo.original_path:
                     original_path = photo.original_path
+                    logger.info(f"Photo {photo_id}: Got original_path from DB: {original_path}")
             
             if not original_path:
                 original_path = photo_info.get('original_path') or photo_info.get('relative_path')
+                if original_path:
+                    logger.info(f"Photo {photo_id}: Got original_path from photo_info: {original_path}")
             
             if original_path:
                 # Преобразуем относительный путь в абсолютный для Docker контейнера
@@ -249,13 +252,22 @@ class S3Uploader:
                     # Другой формат пути
                     full_original_path = os.path.join(base_path, original_path.lstrip('/'))
                 
+                logger.info(f"Photo {photo_id}: Full original path: {full_original_path}")
+                
                 # Проверяем, что файл существует
                 if os.path.exists(full_original_path):
                     s3_key_original = f"hunter-photo/events/{event_id}/original_photo/{os.path.basename(full_original_path)}"
+                    logger.info(f"Photo {photo_id}: Uploading original to S3: {s3_key_original}")
                     original_url = self.upload_file(full_original_path, s3_key_original)
                     uploaded_urls[photo_id]['original_url'] = original_url
+                    if original_url:
+                        logger.info(f"Photo {photo_id}: Original uploaded successfully: {original_url}")
+                    else:
+                        logger.error(f"Photo {photo_id}: Failed to upload original to S3")
                 else:
-                    logger.warning(f"Original photo not found: {full_original_path}")
+                    logger.warning(f"Original photo not found: {full_original_path} for photo {photo_id}")
+            else:
+                logger.warning(f"Photo {photo_id}: No original_path found in DB or photo_info")
         
         return uploaded_urls
 

@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.number_recognition import NumberRecognition
+from utils.number_recognition import get_number_recognition
 from typing import List, Dict
 
 
@@ -29,7 +29,8 @@ def search_by_numbers(self, query_image_path: str, event_id: str = None):
     from app.models import Photo
     
     db = SessionLocal()
-    number_recognition = NumberRecognition()
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем singleton вместо создания нового экземпляра
+    number_recognition = get_number_recognition()
     
     try:
         import logging
@@ -192,7 +193,8 @@ def search_by_numbers(self, query_image_path: str, event_id: str = None):
 
 def extract_numbers(image_path: str) -> List[str]:
     """Извлечь номера с фотографии"""
-    number_recognition = NumberRecognition()
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем singleton вместо создания нового экземпляра
+    number_recognition = get_number_recognition()
     numbers = number_recognition.extract(image_path)
     return numbers
 

@@ -217,6 +217,65 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
     task_logger = get_task_logger("process_event_photos", self.request.id)
     task_logger.log_task_start(event_id=event_id, analyses=analyses)
     
+    # КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ: Логируем окружение Celery
+    import os
+    task_logger.error(f"CELERY TASK PID={os.getpid()} CWD={os.getcwd()} TASK_ID={self.request.id}")
+    logger.error(f"CELERY TASK PID={os.getpid()} CWD={os.getcwd()} TASK_ID={self.request.id}")
+    task_logger.info(f"Log file: {task_logger.get_log_file_path()}")
+    
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализация analyses - извлечение вложенной структуры и конвертация строк в булево
+    # Laravel может передавать {'analyses': {'face_search': '1'}} или {'face_search': '1'}
+    if isinstance(analyses, dict) and 'analyses' in analyses and isinstance(analyses['analyses'], dict):
+        # Извлекаем вложенную структуру
+        nested_analyses = analyses['analyses']
+        # Объединяем с верхним уровнем (если есть)
+        analyses = {**analyses, **nested_analyses}
+        # Удаляем вложенный ключ 'analyses' если он есть
+        if 'analyses' in analyses:
+            del analyses['analyses']
+        logger.info(f"Extracted nested analyses structure: {analyses}")
+    
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Конвертация строковых значений в булево
+    # Laravel может передавать '1', 'true', 'True' вместо True и '0', 'false', 'False' вместо False
+    def normalize_bool(value):
+        """Конвертирует строковые значения в булево"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            value_lower = value.lower().strip()
+            if value_lower in ('1', 'true', 'yes', 'on'):
+                return True
+            elif value_lower in ('0', 'false', 'no', 'off', ''):
+                return False
+        # Если не строка и не булево, пытаемся конвертировать в булево
+        return bool(value) if value is not None else False
+    
+    # Нормализуем все значения analyses
+    analyses_normalized = {}
+    for key, value in analyses.items():
+        if key in ('timeline', 'remove_exif', 'watermark', 'face_search', 'number_search'):
+            analyses_normalized[key] = normalize_bool(value)
+        else:
+            analyses_normalized[key] = value
+    
+    analyses = analyses_normalized
+    logger.info(f"Normalized analyses: {analyses}")
+    
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Предварительная инициализация InsightFace для диагностики
+    # Это поможет увидеть, инициализируется ли модель при старте задачи
+    # ВАЖНО: Используем нормализованные значения analyses
+    if analyses.get('face_search', False):
+        try:
+            task_logger.error("INSIGHTFACE - Предварительная инициализация при старте задачи")
+            logger.error("INSIGHTFACE - Предварительная инициализация при старте задачи")
+            from utils.face_recognition import get_face_recognition
+            face_recognition = get_face_recognition()
+            task_logger.error(f"INSIGHTFACE - Модель инициализирована, model exists: {hasattr(face_recognition, 'model') and face_recognition.model is not None}")
+            logger.error(f"INSIGHTFACE - Модель инициализирована, model exists: {hasattr(face_recognition, 'model') and face_recognition.model is not None}")
+        except Exception as init_error:
+            task_logger.error(f"INSIGHTFACE - Ошибка при предварительной инициализации: {str(init_error)}", exc_info=True)
+            logger.error(f"INSIGHTFACE - Ошибка при предварительной инициализации: {str(init_error)}", exc_info=True)
+    
     db = SessionLocal()
     
     try:
@@ -312,8 +371,14 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 event_info_analyses = event_info['analyze']
                 logger.info(f"Found analyses in event_info.json: {event_info_analyses}, but using passed analyses: {analyses}")
         
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: watermark и remove_exif всегда включены по умолчанию
+        if 'watermark' not in analyses:
+            analyses['watermark'] = True
+        if 'remove_exif' not in analyses:
+            analyses['remove_exif'] = True
+        
         logger.info(f"Processing event {event_id} with analyses: {analyses}")
-        logger.info(f"Analyses enabled: timeline={analyses.get('timeline', False)}, remove_exif={analyses.get('remove_exif', False)}, watermark={analyses.get('watermark', False)}, face_search={analyses.get('face_search', False)}, number_search={analyses.get('number_search', False)}")
+        logger.info(f"Analyses enabled: timeline={analyses.get('timeline', False)}, remove_exif={analyses.get('remove_exif', True)}, watermark={analyses.get('watermark', True)}, face_search={analyses.get('face_search', False)}, number_search={analyses.get('number_search', False)}")
         
         event = db.query(Event).filter(Event.id == event_id).first()
         if not event:
@@ -391,6 +456,15 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
             try:
                 import time
                 photo_start_time = time.time()
+                
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем объект photo из БД перед обработкой
+                # Это гарантирует, что мы работаем с актуальными данными и объект отслеживается сессией
+                photo_id = photo.id
+                db.expire_all()  # Сбрасываем кэш всех объектов
+                photo = db.query(Photo).filter(Photo.id == photo_id).first()
+                if not photo:
+                    logger.error(f"Photo {photo_id} not found in database, skipping")
+                    continue
                 
                 # ВАЖНО: Проверяем таймаут перед началом обработки
                 # Если уже прошло слишком много времени, пропускаем фотографию
@@ -651,9 +725,20 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                     
                     # Обновляем original_path в базе данных (относительный путь)
                     relative_original_path = f"events/{event_id}/original_photo/{unique_filename}"
-                    photo.original_path = relative_original_path
-                    db.commit()
-                    logger.info(f"Photo {photo.id}: Updated original_path in DB")
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
+                    try:
+                        from sqlalchemy import update
+                        update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                            original_path=relative_original_path
+                        )
+                        db.execute(update_stmt)
+                        db.commit()
+                        db.refresh(photo)
+                        logger.info(f"Photo {photo.id}: Updated original_path={photo.original_path} in DB")
+                    except Exception as commit_error:
+                        logger.error(f"Photo {photo.id}: Error committing original_path to DB: {str(commit_error)}", exc_info=True)
+                        db.rollback()
+                        raise
                     
                     # Обновляем event_info.json для remove_exif
                     if os.path.exists(event_info_path):
@@ -691,37 +776,85 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 custom_photo_path = os.path.join(custom_photo_dir, custom_filename)
                 
                 if watermark_enabled:
-                    logger.info(f"Photo {photo.id}: Adding watermark")
+                    logger.info(f"Photo {photo.id}: Adding watermark, processed_path={processed_path}, custom_photo_path={custom_photo_path}")
+                    # Проверяем, что исходный файл существует
+                    if not os.path.exists(processed_path):
+                        logger.error(f"Photo {photo.id}: processed_path does not exist: {processed_path}")
+                        raise FileNotFoundError(f"processed_path not found: {processed_path}")
+                    
                     # Наносим водяной знак и конвертируем в WebP
                     watermarked_path = watermark_processor.add_watermark(
                         processed_path,
                         text=f"hunter-photo.ru",
                         output_path=custom_photo_path
                     )
+                    logger.info(f"Photo {photo.id}: watermark_processor.add_watermark returned: {watermarked_path}")
+                    
                     # Если watermark не вернул путь, используем наш
                     if not watermarked_path:
+                        logger.warning(f"Photo {photo.id}: watermark_processor returned None, using custom_photo_path")
                         watermarked_path = custom_photo_path
                         # Конвертируем в WebP если watermark не сделал этого
                         if not watermarked_path.endswith('.webp'):
+                            logger.info(f"Photo {photo.id}: Converting to WebP: {watermarked_path}")
                             # Используем глобальный image_processor, уже созданный выше
                             watermarked_path = image_processor.convert_to_webp(watermarked_path)
+                            logger.info(f"Photo {photo.id}: convert_to_webp returned: {watermarked_path}")
                 else:
+                    logger.info(f"Photo {photo.id}: Watermark disabled, converting to WebP: {processed_path} -> {custom_photo_path}")
+                    # Проверяем, что исходный файл существует
+                    if not os.path.exists(processed_path):
+                        logger.error(f"Photo {photo.id}: processed_path does not exist: {processed_path}")
+                        raise FileNotFoundError(f"processed_path not found: {processed_path}")
+                    
                     # Без водяного знака, просто конвертируем в WebP
                     # Используем глобальный image_processor, уже созданный выше
-                    watermarked_path = image_processor.convert_to_webp(processed_path)
+                    watermarked_path = image_processor.convert_to_webp(processed_path, output_path=custom_photo_path)
+                    logger.info(f"Photo {photo.id}: convert_to_webp returned: {watermarked_path}")
+                    
                     # Перемещаем в custom_photo если нужно
                     if watermarked_path != custom_photo_path:
+                        logger.info(f"Photo {photo.id}: Moving {watermarked_path} to {custom_photo_path}")
                         import shutil
                         shutil.move(watermarked_path, custom_photo_path)
                         watermarked_path = custom_photo_path
                 
                 # Сохраняем относительный путь для custom_path
                 relative_custom_path = f"events/{event_id}/custom_photo/{custom_filename}"
-                photo.custom_path = relative_custom_path
-                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем custom_name
-                photo.custom_name = custom_filename
-                db.commit()
-                logger.info(f"Photo {photo.id}: Updated custom_path and custom_name in DB")
+                
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем, что файл действительно создан
+                if not os.path.exists(custom_photo_path):
+                    logger.error(f"Photo {photo.id}: custom_photo file not created: {custom_photo_path}")
+                    raise FileNotFoundError(f"custom_photo file not found: {custom_photo_path}")
+                
+                logger.info(f"Photo {photo.id}: custom_photo file created successfully: {custom_photo_path}, size: {os.path.getsize(custom_photo_path)} bytes")
+                
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем объект из БД перед обновлением
+                db.expire(photo)  # Сбрасываем кэш объекта
+                photo = db.query(Photo).filter(Photo.id == photo.id).first()
+                if not photo:
+                    logger.error(f"Photo {photo.id}: Photo not found in DB after reload")
+                    raise ValueError(f"Photo {photo.id} not found in database")
+                
+                # Используем update() для гарантированного сохранения
+                try:
+                    from sqlalchemy import update
+                    update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                        custom_path=relative_custom_path,
+                        custom_name=custom_filename
+                    )
+                    result = db.execute(update_stmt)
+                    db.commit()
+                    logger.info(f"Photo {photo.id}: Update statement executed, rows affected: {result.rowcount}")
+                    
+                    # Перезагружаем объект из БД для проверки
+                    db.expire(photo)
+                    photo = db.query(Photo).filter(Photo.id == photo.id).first()
+                    logger.info(f"Photo {photo.id}: After commit - custom_path={photo.custom_path}, custom_name={photo.custom_name}")
+                except Exception as commit_error:
+                    logger.error(f"Photo {photo.id}: Error committing custom_name to DB: {str(commit_error)}", exc_info=True)
+                    db.rollback()
+                    raise
                 
                 # Обновляем event_info.json для watermark
                 if os.path.exists(event_info_path):
@@ -743,31 +876,59 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 step_logger_face = StepLogger(str(event_id), str(photo.id), "face_search") if face_search_enabled else None
                 
                 if face_search_enabled:
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем original_photo_path для детекции лиц
+                    # Это файл после нормализации EXIF, но до watermark (JPEG, не WebP)
+                    face_detection_path = original_photo_path if 'original_photo_path' in locals() else processed_path
+                    
+                    # Проверяем, что файл существует и это JPEG (не WebP)
+                    if not os.path.exists(face_detection_path):
+                        logger.warning(f"Face search: face_detection_path not found: {face_detection_path}, trying processed_path: {processed_path}")
+                        face_detection_path = processed_path
+                    
+                    # Проверяем формат файла
+                    file_ext = os.path.splitext(face_detection_path)[1].lower()
+                    if file_ext == '.webp':
+                        logger.warning(f"Face search: face_detection_path is WebP ({face_detection_path}), this may cause issues. Using original_photo_path if available.")
+                        if 'original_photo_path' in locals() and os.path.exists(original_photo_path):
+                            face_detection_path = original_photo_path
+                            logger.info(f"Face search: Switched to original_photo_path: {face_detection_path}")
+                    
                     if step_logger_face:
                         step_logger_face.info(f"Starting face search for photo {photo.id}")
+                        step_logger_face.info(f"Face detection path: {face_detection_path}")
                         step_logger_face.info(f"Processed path: {processed_path}")
+                        step_logger_face.info(f"Original photo path: {original_photo_path if 'original_photo_path' in locals() else 'N/A'}")
                     logger.info(f"Photo {photo.id}: Starting face search")
+                    logger.info(f"Photo {photo.id}: Face detection path: {face_detection_path}, exists: {os.path.exists(face_detection_path)}, size: {os.path.getsize(face_detection_path) if os.path.exists(face_detection_path) else 0} bytes")
                     from tasks.face_search import extract_faces_with_bboxes
                     import logging
                     logger = logging.getLogger(__name__)
                     
                     # Проверяем, что файл существует
-                    if not os.path.exists(processed_path):
-                        logger.error(f"Face search: File not found: {processed_path} for photo {photo.id}")
-                        photo.has_faces = False
-                        photo.face_encodings = []
-                        photo.face_vec = None
-                        photo.face_bboxes = []
+                    if not os.path.exists(face_detection_path):
+                        logger.error(f"Face search: File not found: {face_detection_path} for photo {photo.id}")
+                        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
+                        from sqlalchemy import update
+                        update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                            has_faces=False,
+                            face_encodings=[],
+                            face_vec=None,
+                            face_bboxes=[]
+                        )
+                        db.execute(update_stmt)
                         db.commit()
+                        logger.info(f"Face search: Saved empty face data to DB for photo {photo.id} (file not found)")
                     else:
                         try:
-                            logger.info(f"Face search: Starting extraction for photo {photo.id}, path: {processed_path}")
+                            logger.info(f"Face search: Starting extraction for photo {photo.id}, path: {face_detection_path}")
+                            logger.info(f"Face search: File info - exists: {os.path.exists(face_detection_path)}, size: {os.path.getsize(face_detection_path)} bytes, ext: {os.path.splitext(face_detection_path)[1]}")
+                            
                             # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавляем таймаут для обработки лиц, чтобы избежать зависаний
                             import time
                             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
                             
                             start_time = time.time()
-                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id} with 60s timeout...")
+                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id} with 60s timeout, path: {face_detection_path}...")
                             
                             # Используем ThreadPoolExecutor для таймаута
                             faces_data = None
@@ -775,11 +936,22 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                             
                             try:
                                 def extract_faces():
-                                    return extract_faces_with_bboxes(processed_path)
+                                    task_logger.error(f"INSIGHTFACE - Запуск для фото {photo.id}")
+                                    logger.error(f"INSIGHTFACE - Запуск для фото {photo.id}")
+                                    task_logger.info(f"INSIGHTFACE - Путь к файлу: {face_detection_path}")
+                                    logger.info(f"INSIGHTFACE - Путь к файлу: {face_detection_path}")
+                                    result = extract_faces_with_bboxes(face_detection_path)
+                                    task_logger.error(f"INSIGHTFACE - Завершен для фото {photo.id}, найдено лиц: {len(result) if result else 0}")
+                                    logger.error(f"INSIGHTFACE - Завершен для фото {photo.id}, найдено лиц: {len(result) if result else 0}")
+                                    return result
                                 
+                                task_logger.error(f"INSIGHTFACE - Запуск анализа для фото {photo.id} через ThreadPoolExecutor")
+                                logger.error(f"INSIGHTFACE - Запуск анализа для фото {photo.id} через ThreadPoolExecutor")
                                 with ThreadPoolExecutor(max_workers=1) as executor:
                                     future = executor.submit(extract_faces)
                                     faces_data = future.result(timeout=timeout_seconds)
+                                task_logger.error(f"INSIGHTFACE - Анализ завершен для фото {photo.id}, результат получен")
+                                logger.error(f"INSIGHTFACE - Анализ завершен для фото {photo.id}, результат получен")
                                     
                             except FuturesTimeoutError:
                                 logger.error(f"Face search: Timeout after {timeout_seconds}s for photo {photo.id}")
@@ -860,19 +1032,62 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                                 # face_encodings - список всех найденных лиц (embeddings)
                                 # face_bboxes - список координат bounding boxes [[x1, y1, x2, y2], ...]
                                 # face_vec - первое лицо как основной вектор (для совместимости)
-                                photo.face_encodings = face_vectors
-                                photo.face_bboxes = face_bboxes
-                                photo.face_vec = face_vectors[0] if face_vectors else None
+                                
+                                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убеждаемся, что данные сериализуемы
+                                # Конвертируем numpy arrays в списки Python
+                                face_vectors_serializable = []
+                                for vec in face_vectors:
+                                    if hasattr(vec, 'tolist'):
+                                        face_vectors_serializable.append(vec.tolist())
+                                    else:
+                                        face_vectors_serializable.append(list(vec))
+                                
+                                face_bboxes_serializable = []
+                                for bbox in face_bboxes:
+                                    if isinstance(bbox, list):
+                                        face_bboxes_serializable.append(bbox)
+                                    else:
+                                        face_bboxes_serializable.append(list(bbox))
+                                
+                                photo.face_encodings = face_vectors_serializable
+                                photo.face_bboxes = face_bboxes_serializable
+                                photo.face_vec = face_vectors_serializable[0] if face_vectors_serializable else None
                                 photo.has_faces = True  # Явно устанавливаем флаг
                                 
-                                logger.info(f"Face search: Before commit - photo.has_faces={photo.has_faces}, face_encodings count={len(face_vectors)}, face_bboxes count={len(face_bboxes)}")
+                                logger.info(f"Face search: Before commit - photo.has_faces={photo.has_faces}, face_encodings count={len(face_vectors_serializable)}, face_bboxes count={len(face_bboxes_serializable)}")
+                                logger.debug(f"Face search: Sample face_bboxes[0]={face_bboxes_serializable[0] if face_bboxes_serializable else 'N/A'}")
                                 
                                 # ВАЖНО: Явно сохраняем изменения в БД
+                                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
                                 try:
-                                    db.add(photo)  # Явно добавляем объект в сессию
+                                    from sqlalchemy import update
+                                    import json as json_module
+                                    
+                                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем объект из БД перед обновлением
+                                    db.expire(photo)
+                                    photo = db.query(Photo).filter(Photo.id == photo.id).first()
+                                    if not photo:
+                                        logger.error(f"Face search: Photo {photo.id} not found in DB after reload")
+                                        raise ValueError(f"Photo {photo.id} not found in database")
+                                    
+                                    # Обновляем через SQL для гарантии сохранения
+                                    # ВАЖНО: SQLAlchemy автоматически сериализует JSON поля, передаем списки напрямую
+                                    update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                                        face_encodings=face_vectors_serializable if face_vectors_serializable else None,
+                                        face_bboxes=face_bboxes_serializable if face_bboxes_serializable else None,
+                                        face_vec=face_vectors_serializable[0] if face_vectors_serializable else None,
+                                        has_faces=True
+                                    )
+                                    result = db.execute(update_stmt)
                                     db.commit()
-                                    db.refresh(photo)  # Обновляем объект из БД
+                                    logger.info(f"Face search: Update statement executed, rows affected: {result.rowcount}")
+                                    
+                                    # Перезагружаем объект из БД для проверки
+                                    db.expire(photo)
+                                    photo = db.query(Photo).filter(Photo.id == photo.id).first()
                                     logger.info(f"Face search: After commit - photo.has_faces={photo.has_faces}, face_encodings count={len(photo.face_encodings) if photo.face_encodings else 0}, face_bboxes count={len(photo.face_bboxes) if photo.face_bboxes else 0}")
+                                    if photo.face_bboxes:
+                                        logger.debug(f"Face search: After commit - face_bboxes[0]={photo.face_bboxes[0] if photo.face_bboxes else 'N/A'}")
                                 except Exception as commit_error:
                                     logger.error(f"Face search: Error committing to DB: {str(commit_error)}", exc_info=True)
                                     db.rollback()
@@ -902,23 +1117,22 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                                 logger.warning(f"Face search: processed_path={processed_path}, file_exists={os.path.exists(processed_path) if processed_path else False}")
                                 
                                 # Проверяем, что файл существует и доступен
-                                if processed_path and os.path.exists(processed_path):
-                                    file_size = os.path.getsize(processed_path)
-                                    logger.warning(f"Face search: File exists but no faces found, size={file_size} bytes")
+                                if face_detection_path and os.path.exists(face_detection_path):
+                                    file_size = os.path.getsize(face_detection_path)
+                                    logger.warning(f"Face search: File exists but no faces found, path={face_detection_path}, size={file_size} bytes")
+                                    logger.warning(f"Face search: File extension: {os.path.splitext(face_detection_path)[1]}")
                                 
-                                photo.has_faces = False
-                                photo.face_encodings = []
-                                photo.face_vec = None
-                                photo.face_bboxes = []  # Устанавливаем пустой список вместо None
-                                
-                                # ВАЖНО: Явно сохраняем изменения в БД
-                                try:
-                                    db.add(photo)
-                                    db.commit()
-                                    logger.info(f"Face search: Saved has_faces=False to DB for photo {photo.id}")
-                                except Exception as commit_error:
-                                    logger.error(f"Face search: Error committing no-faces to DB: {str(commit_error)}", exc_info=True)
-                                    db.rollback()
+                                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
+                                from sqlalchemy import update
+                                update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                                    has_faces=False,
+                                    face_encodings=[],
+                                    face_vec=None,
+                                    face_bboxes=[]
+                                )
+                                db.execute(update_stmt)
+                                db.commit()
+                                logger.info(f"Face search: Saved has_faces=False to DB for photo {photo.id}")
                                 
                                 # ВАЖНО: Обновляем event_info.json даже если лиц не найдено
                                 if os.path.exists(event_info_path):
@@ -938,11 +1152,17 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                                     logger.info(f"Photo {photo.id}: Updated event_info.json for face_search (no faces found)")
                         except Exception as e:
                             logger.error(f"Face search error for photo {photo.id}: {str(e)}", exc_info=True)
-                            photo.has_faces = False
-                            photo.face_encodings = []
-                            photo.face_vec = None
-                            photo.face_bboxes = []  # Устанавливаем пустой список вместо None
+                            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
+                            from sqlalchemy import update
+                            update_stmt = update(Photo).where(Photo.id == photo.id).values(
+                                has_faces=False,
+                                face_encodings=[],
+                                face_vec=None,
+                                face_bboxes=[]
+                            )
+                            db.execute(update_stmt)
                             db.commit()
+                            logger.info(f"Face search: Saved empty face data to DB for photo {photo.id} (error occurred)")
                             
                             # Обновляем event_info.json с ошибкой
                             if os.path.exists(event_info_path):
@@ -1306,18 +1526,20 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                         # Обновляем базу данных с S3 URL
                         print(f"Updating database with S3 URLs for {len(s3_urls)} photos...")
                         updated_count = 0
+                        from sqlalchemy import update
                         for photo_id, urls in s3_urls.items():
                             photo = db.query(Photo).filter(Photo.id == photo_id).first()
                             if photo:
-                                updated = False
+                                update_values = {}
                                 if urls.get('custom_url'):
-                                    photo.s3_custom_url = urls['custom_url']
-                                    updated = True
+                                    update_values['s3_custom_url'] = urls['custom_url']
                                 if urls.get('original_url'):
-                                    photo.s3_original_url = urls['original_url']
-                                    updated = True
+                                    update_values['s3_original_url'] = urls['original_url']
                                 
-                                if updated:
+                                if update_values:
+                                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем update() для гарантированного сохранения
+                                    update_stmt = update(Photo).where(Photo.id == photo_id).values(**update_values)
+                                    db.execute(update_stmt)
                                     db.commit()
                                     updated_count += 1
                                     print(f"Updated photo {photo_id} with S3 URLs (custom: {bool(urls.get('custom_url'))}, original: {bool(urls.get('original_url'))})")

@@ -141,12 +141,61 @@ class EXIFProcessor:
             img_transposed = ImageOps.exif_transpose(img)
             new_size = img_transposed.size
             
+            logger.info(f"EXIF normalize: original_size={original_size}, new_size={new_size}, orientation={orientation}")
+            
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Если exif_transpose не применил ориентацию, применяем вручную
+            if orientation and orientation != 1 and original_size == new_size:
+                logger.warning(f"exif_transpose did not apply orientation {orientation}, applying manually")
+                try:
+                    # Применяем ориентацию вручную
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Для поворотов на 90/270 градусов используем expand=True
+                    if orientation == 2:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                    elif orientation == 3:
+                        img_transposed = img_transposed.rotate(180, expand=True)
+                    elif orientation == 4:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                    elif orientation == 5:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT).rotate(90, expand=True)
+                    elif orientation == 6:
+                        img_transposed = img_transposed.rotate(-90, expand=True)  # 270° CW
+                    elif orientation == 7:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT).rotate(-90, expand=True)
+                    elif orientation == 8:
+                        img_transposed = img_transposed.rotate(90, expand=True)  # 90° CCW
+                    new_size = img_transposed.size
+                    logger.info(f"Manual orientation applied: {original_size} -> {new_size}, orientation: {orientation}")
+                except Exception as manual_error:
+                    logger.error(f"Error applying manual orientation: {str(manual_error)}")
+            
             # Проверяем, изменился ли размер (это означает, что была применена ориентация)
             if original_size != new_size:
                 logger.info(f"EXIF orientation applied: {original_size} -> {new_size}, orientation tag: {orientation}")
             elif orientation and orientation != 1:
                 # Если ориентация была не 1, но размер не изменился, возможно изображение уже повернуто
-                logger.info(f"EXIF orientation tag found: {orientation}, but image size unchanged (may already be rotated)")
+                logger.warning(f"EXIF orientation tag found: {orientation}, but image size unchanged (may already be rotated)")
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Применяем ориентацию вручную даже если размер не изменился
+                logger.info(f"Applying manual rotation for orientation {orientation} even though size unchanged")
+                try:
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Для поворотов на 90/270 градусов используем expand=True
+                    if orientation == 2:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                    elif orientation == 3:
+                        img_transposed = img_transposed.rotate(180, expand=True)
+                    elif orientation == 4:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                    elif orientation == 5:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT).rotate(90, expand=True)
+                    elif orientation == 6:
+                        img_transposed = img_transposed.rotate(-90, expand=True)  # 270° CW
+                    elif orientation == 7:
+                        img_transposed = img_transposed.transpose(Image.Transpose.FLIP_LEFT_RIGHT).rotate(-90, expand=True)
+                    elif orientation == 8:
+                        img_transposed = img_transposed.rotate(90, expand=True)  # 90° CCW
+                    new_size = img_transposed.size
+                    logger.info(f"Manual orientation applied (size unchanged case): {original_size} -> {new_size}, orientation: {orientation}")
+                except Exception as manual_error:
+                    logger.error(f"Error applying manual orientation (size unchanged case): {str(manual_error)}")
             else:
                 logger.debug("No EXIF orientation change needed (image already in correct orientation)")
             
@@ -155,9 +204,25 @@ class EXIFProcessor:
                 img_transposed = img_transposed.convert("RGB")
             
             # Сохраняем БЕЗ EXIF (перезаписываем файл)
-            # Важно: не передаем exif=exif, чтобы удалить EXIF данные
-            img_transposed.save(image_path, "JPEG", quality=95, exif=b'')
-            logger.info(f"Image normalized and saved without EXIF: {image_path}")
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем save() без параметра exif для удаления EXIF
+            # Также используем optimize=True для лучшего сжатия
+            try:
+                # Сохраняем без EXIF данных
+                img_transposed.save(image_path, "JPEG", quality=95, optimize=True)
+                logger.info(f"Image normalized and saved without EXIF: {image_path}, size: {new_size}")
+            except Exception as save_error:
+                logger.error(f"Error saving image: {str(save_error)}")
+                # Пробуем альтернативный способ сохранения
+                try:
+                    # Создаем новое изображение без EXIF
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Image уже импортирован в начале файла, не импортируем снова
+                    new_img = Image.new('RGB', img_transposed.size)
+                    new_img.paste(img_transposed)
+                    new_img.save(image_path, "JPEG", quality=95, optimize=True)
+                    logger.info(f"Image saved using alternative method: {image_path}")
+                except Exception as alt_error:
+                    logger.error(f"Alternative save method also failed: {str(alt_error)}")
+                    raise
             
         except Exception as e:
             logger.error(f"Error normalizing EXIF orientation for {image_path}: {str(e)}", exc_info=True)

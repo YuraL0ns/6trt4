@@ -118,6 +118,8 @@ services:
       - shared_storage:/shared
       - ./laravel/storage/app/public/events:/var/www/html/storage/app/public/events:rw
       - ./laravel/storage:/var/www/html/storage:rw
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Явно монтируем модели InsightFace для гарантированного доступа
+      - ./fastapi/models:/app/models:ro
     environment:
       DATABASE_URL: postgresql://${DB_USERNAME:-hunter_photo}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-hunter_photo}
       REDIS_URL: redis://redis:6379/0
@@ -129,6 +131,8 @@ services:
       S3_CLOUD_SECRET_KEY: ${S3_CLOUD_SECRET_KEY}
       S3_CLOUD_REGION: ${S3_CLOUD_REGION}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Явно указываем путь к моделям InsightFace
+      INSIGHTFACE_MODEL_PATH: /app/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +160,8 @@ services:
       - shared_storage:/shared
       - ./laravel/storage/app/public/events:/var/www/html/storage/app/public/events:rw
       - ./laravel/storage:/var/www/html/storage:rw
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Явно монтируем модели InsightFace для гарантированного доступа
+      - ./fastapi/models:/app/models:ro
     environment:
       DATABASE_URL: postgresql://${DB_USERNAME:-hunter_photo}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-hunter_photo}
       REDIS_URL: redis://redis:6379/0
@@ -167,13 +173,17 @@ services:
       S3_CLOUD_SECRET_KEY: ${S3_CLOUD_SECRET_KEY}
       S3_CLOUD_REGION: ${S3_CLOUD_REGION}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Явно указываем путь к моделям InsightFace
+      INSIGHTFACE_MODEL_PATH: /app/models
     depends_on:
       - postgres
       - redis
       - fastapi
     networks:
       - hunter-photo-network
-    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4 --queues=celery,high_priority,default,low_priority
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем -P solo для ML библиотек (InsightFace, OpenCV, ONNX Runtime)
+    # prefork ломает ML библиотеки, solo = один процесс, один поток (безопасно)
+    command: celery -A tasks.celery_app worker --loglevel=info -P solo --queues=celery,high_priority,default,low_priority
 
 volumes:
   postgres_data:

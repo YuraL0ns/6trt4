@@ -20,7 +20,20 @@ class TaskLogger:
     def __init__(self, task_name: str, task_id: Optional[str] = None):
         self.task_name = task_name
         self.task_id = task_id
-        self.log_dir = "/app/logs/tasks"
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем путь fastapi/logs/tasks для совместимости
+        # Проверяем оба варианта пути
+        log_dirs = [
+            "/app/logs/tasks",  # Docker контейнер
+            "fastapi/logs/tasks",  # Локальная разработка
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "tasks")  # Относительный путь
+        ]
+        self.log_dir = None
+        for log_dir in log_dirs:
+            if os.path.exists(os.path.dirname(log_dir)) or log_dir == "/app/logs/tasks":
+                self.log_dir = log_dir
+                break
+        if not self.log_dir:
+            self.log_dir = log_dirs[0]  # Fallback на первый вариант
         self._ensure_log_dir()
         
         # Создаем уникальный ключ для кэша

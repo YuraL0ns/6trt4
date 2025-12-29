@@ -233,7 +233,19 @@ class EventController extends Controller
             
             if ($status['state'] === 'SUCCESS') {
                 $response['status'] = 'completed';
-                $response['result'] = $status['result'] ?? null;
+                $result = $status['result'] ?? null;
+                
+                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильно извлекаем результаты из ответа задачи
+                // Результат задачи имеет формат: {"status": "completed", "results": [...], "total_found": N}
+                if ($result && is_array($result)) {
+                    $response['results'] = $result['results'] ?? [];
+                    $response['total'] = $result['total_found'] ?? count($response['results']);
+                    $response['result'] = $result; // Оставляем для обратной совместимости
+                } else {
+                    $response['results'] = [];
+                    $response['total'] = 0;
+                    $response['result'] = $result;
+                }
             } else if ($status['state'] === 'FAILURE' || $status['state'] === 'REVOKED') {
                 $response['status'] = 'failed';
                 $response['error'] = $status['error'] ?? $status['status'] ?? 'Задача завершилась с ошибкой';

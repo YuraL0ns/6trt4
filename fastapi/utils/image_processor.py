@@ -193,15 +193,20 @@ class ImageProcessor:
         # Вызываем новую функцию для обратной совместимости
         return self.remove_to_exif_and_rotate(image_path, output_path)
     
-    def convert_to_webp(self, image_path: str, quality: int = 85) -> str:
+    def convert_to_webp(self, image_path: str, quality: int = 85, output_path: Optional[str] = None) -> str:
         """Конвертировать изображение в WebP"""
-        base, ext = os.path.splitext(image_path)
-        output_path = f"{base}.webp"
+        if output_path:
+            # Используем указанный путь
+            output = output_path
+        else:
+            # Создаем путь с расширением .webp
+            base, ext = os.path.splitext(image_path)
+            output = f"{base}.webp"
         
         img = Image.open(image_path)
-        img.save(output_path, "WEBP", quality=quality)
+        img.save(output, "WEBP", quality=quality)
         
-        return output_path
+        return output
     
     def compress_image(self, image_path: str, max_size_mb: float = 5.0) -> str:
         """Сжать изображение до указанного размера"""

@@ -61,9 +61,10 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
         logger.debug(f"Query embedding (first 5): {query_embedding[:5]}")
 
         # ---- 2) Грузим фото из базы ----
-        # ВАЖНО: Проверяем разные варианты фильтрации has_faces
-        # В PostgreSQL boolean может быть True, False или NULL
-        # Используем более надежный фильтр
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Поле face_encodings имеет тип JSON (не JSONB)
+        # jsonb_array_length() не работает с JSON, поэтому используем фильтрацию в Python
+        # Это безопаснее и работает с любым типом JSON поля
+        
         if event_id:
             # Сначала проверяем все фотографии события для диагностики
             all_photos_count = db.query(Photo).filter(Photo.event_id == event_id).count()
@@ -76,27 +77,45 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
             ).count()
             logger.info(f"Photos with has_faces=True in event {event_id}: {has_faces_true_count}")
             
-            # Проверяем фотографии с face_encodings не пустыми
-            has_encodings_count = db.query(Photo).filter(
+            # Проверяем фотографии с face_encodings не NULL
+            has_encodings_not_null_count = db.query(Photo).filter(
                 Photo.event_id == event_id,
-                Photo.face_encodings.isnot(None),
-                Photo.face_encodings != []
+                Photo.face_encodings.isnot(None)
             ).count()
-            logger.info(f"Photos with face_encodings in event {event_id}: {has_encodings_count}")
+            logger.info(f"Photos with face_encodings NOT NULL in event {event_id}: {has_encodings_not_null_count}")
             
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем только face_encodings как источник истины
-            # has_faces оставляем как вспомогательное поле, не как фильтр
-            q = db.query(Photo).filter(
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Загружаем все фотографии с face_encodings != None и фильтруем в Python
+            # Это работает с типом JSON (не требует JSONB)
+            all_photos = db.query(Photo).filter(
                 Photo.event_id == event_id,
-                Photo.face_encodings.isnot(None),
-                Photo.face_encodings != []
-            )
+                Photo.face_encodings.isnot(None)
+            ).all()
+            
+            # Фильтруем в Python: проверяем, что face_encodings - это непустой список
+            photos_with_faces = []
+            for p in all_photos:
+                if p.face_encodings and isinstance(p.face_encodings, list) and len(p.face_encodings) > 0:
+                    photos_with_faces.append(p)
+            
+            has_encodings_count = len(photos_with_faces)
+            logger.info(f"Photos with face_encodings (non-empty array, Python filter) in event {event_id}: {has_encodings_count}")
+            
+            # Создаем запрос для выбранных фотографий
+            photo_ids = [p.id for p in photos_with_faces]
+            if photo_ids:
+                q = db.query(Photo).filter(Photo.id.in_(photo_ids))
+            else:
+                # Если нет фотографий, создаем пустой запрос
+                q = db.query(Photo).filter(Photo.id == None)  # Это вернет пустой результат
         else:
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем только face_encodings как источник истины
-            q = db.query(Photo).filter(
-                Photo.face_encodings.isnot(None),
-                Photo.face_encodings != []
-            )
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Загружаем все фотографии с face_encodings != None и фильтруем в Python
+            all_photos = db.query(Photo).filter(Photo.face_encodings.isnot(None)).all()
+            photos_with_faces = [p for p in all_photos if p.face_encodings and isinstance(p.face_encodings, list) and len(p.face_encodings) > 0]
+            photo_ids = [p.id for p in photos_with_faces]
+            if photo_ids:
+                q = db.query(Photo).filter(Photo.id.in_(photo_ids))
+            else:
+                q = db.query(Photo).filter(Photo.id == None)
 
         photos = q.all()
         total_photos = len(photos)

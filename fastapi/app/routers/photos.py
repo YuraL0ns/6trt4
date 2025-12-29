@@ -57,7 +57,7 @@ async def search_by_face(
         # Удаляем файл при ошибке
         if os.path.exists(tmp_path):
             try:
-            os.unlink(tmp_path)
+                os.unlink(tmp_path)
             except:
                 pass
         raise HTTPException(status_code=500, detail=f"Error starting search: {str(e)}")
@@ -106,7 +106,7 @@ async def search_by_number(
         # Удаляем файл при ошибке
         if os.path.exists(tmp_path):
             try:
-            os.unlink(tmp_path)
+                os.unlink(tmp_path)
             except:
                 pass
         raise HTTPException(status_code=500, detail=f"Error starting search: {str(e)}")

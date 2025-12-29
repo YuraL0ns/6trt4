@@ -4,18 +4,52 @@ import numpy as np
 from typing import List
 from app.config import settings
 import logging
+import os
+import sys
+
+logger = logging.getLogger(__name__)
+
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Singleton для NumberRecognition
+# EasyOCR должен быть singleton на процесс, иначе модель инициализируется каждый раз заново
+_number_recognition_instance = None
+
+def get_number_recognition():
+    """Получить singleton экземпляр NumberRecognition"""
+    global _number_recognition_instance
+    pid = os.getpid()
+    
+    logger.info(f"get_number_recognition() CALLED PID={pid} instance_exists={_number_recognition_instance is not None}")
+    
+    if _number_recognition_instance is None:
+        logger.info(f"get_number_recognition() - Creating new NumberRecognition instance PID={pid}")
+        _number_recognition_instance = NumberRecognition()
+        logger.info(f"get_number_recognition() - NumberRecognition instance created successfully PID={pid}")
+    else:
+        logger.info(f"get_number_recognition() - Returning existing instance PID={pid}")
+    
+    return _number_recognition_instance
 
 
 class NumberRecognition:
     """Распознавание номеров с помощью EasyOCR"""
     
     def __init__(self):
+        # КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ: Логируем окружение для диагностики
+        pid = os.getpid()
+        cwd = os.getcwd()
+        
         self.logger = logging.getLogger(__name__)
+        logger.info(f"EASYOCR INIT PID={pid} CWD={cwd}")
+        logger.info(f"EASYOCR INIT - Python path (first 3): {sys.path[:3]}")
+        
         # Инициализируем EasyOCR с языками из настроек
         languages = settings.easyocr_languages_list
+        logger.info(f"EASYOCR INIT - Initializing with languages: {languages}")
         self.logger.info(f"Initializing EasyOCR with languages: {languages}")
+        
         try:
             # Используем параметры для улучшения распознавания номеров
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: EasyOCR не thread-safe, используем CPU и отключаем verbose
             self.reader = easyocr.Reader(
                 languages,
                 gpu=False,  # Используем CPU (можно включить GPU если доступен)
@@ -23,8 +57,10 @@ class NumberRecognition:
                 model_storage_directory=None,  # Используем дефолтную директорию
                 download_enabled=True  # Разрешаем загрузку моделей если нужно
             )
+            logger.info(f"EASYOCR INIT - SUCCESS: Model loaded and ready, PID={pid}")
             self.logger.info("EasyOCR initialized successfully")
         except Exception as e:
+            logger.error(f"EASYOCR INIT - FAILED: {str(e)}")
             self.logger.error(f"Failed to initialize EasyOCR: {str(e)}", exc_info=True)
             raise
     
