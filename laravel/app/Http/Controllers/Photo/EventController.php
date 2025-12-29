@@ -736,7 +736,7 @@ class EventController extends Controller
                                 }
                             }
                             return false;
-                        });
+                });
                     } else {
                         if ($allInPending) {
                             \Log::debug("EventController::analysisStatus: All tasks are pending, not publishing", [

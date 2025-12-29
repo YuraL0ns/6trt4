@@ -118,7 +118,7 @@ class FastApiClient
                 'status' => $response->status(),
                 'successful' => $response->successful(),
                 'body' => $response->body()
-            ]);
+                ]);
 
             if ($response->successful()) {
                 $result = $response->json();

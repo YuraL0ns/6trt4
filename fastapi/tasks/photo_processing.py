@@ -718,7 +718,10 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 # Сохраняем относительный путь для custom_path
                 relative_custom_path = f"events/{event_id}/custom_photo/{custom_filename}"
                 photo.custom_path = relative_custom_path
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем custom_name
+                photo.custom_name = custom_filename
                 db.commit()
+                logger.info(f"Photo {photo.id}: Updated custom_path and custom_name in DB")
                 
                 # Обновляем event_info.json для watermark
                 if os.path.exists(event_info_path):
@@ -759,16 +762,32 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                     else:
                         try:
                             logger.info(f"Face search: Starting extraction for photo {photo.id}, path: {processed_path}")
-                            # ВАЖНО: apply_exif=False, так как изображение уже обработано через remove_exif
-                            # и повернуто в правильную ориентацию. При поиске используем apply_exif=True
-                            # для запроса, чтобы соответствовать ориентации индексированных изображений.
-                            # ВАЖНО: Добавляем таймаут на уровне задачи, чтобы избежать зависаний
+                            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавляем таймаут для обработки лиц, чтобы избежать зависаний
                             import time
+                            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                            
                             start_time = time.time()
-                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id}...")
-                            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
-                            # EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
-                            faces_data = extract_faces_with_bboxes(processed_path)
+                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id} with 60s timeout...")
+                            
+                            # Используем ThreadPoolExecutor для таймаута
+                            faces_data = None
+                            timeout_seconds = 60  # Увеличиваем таймаут до 60 секунд
+                            
+                            try:
+                                def extract_faces():
+                                    return extract_faces_with_bboxes(processed_path)
+                                
+                                with ThreadPoolExecutor(max_workers=1) as executor:
+                                    future = executor.submit(extract_faces)
+                                    faces_data = future.result(timeout=timeout_seconds)
+                                    
+                            except FuturesTimeoutError:
+                                logger.error(f"Face search: Timeout after {timeout_seconds}s for photo {photo.id}")
+                                faces_data = []
+                            except Exception as timeout_error:
+                                logger.error(f"Face search: Error during extraction for photo {photo.id}: {str(timeout_error)}", exc_info=True)
+                                faces_data = []
+                            
                             elapsed_time = time.time() - start_time
                             logger.info(f"Face search: Extraction completed in {elapsed_time:.2f} seconds for photo {photo.id}")
                             if elapsed_time > 30:
@@ -895,7 +914,7 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                                 # ВАЖНО: Явно сохраняем изменения в БД
                                 try:
                                     db.add(photo)
-                                    db.commit()
+                                db.commit()
                                     logger.info(f"Face search: Saved has_faces=False to DB for photo {photo.id}")
                                 except Exception as commit_error:
                                     logger.error(f"Face search: Error committing no-faces to DB: {str(commit_error)}", exc_info=True)
@@ -1142,9 +1161,9 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 # Сохраняем информацию о неудачной фотографии
                 # ВАЖНО: Используем глобальный traceback, импортированный в начале файла
                 try:
-                    failed_photos.append({
-                        'photo_id': str(photo.id),
-                        'error': str(e),
+                failed_photos.append({
+                    'photo_id': str(photo.id),
+                    'error': str(e),
                         'error_type': type(e).__name__,
                         'index': idx,
                         'traceback': traceback.format_exc()
@@ -1157,7 +1176,7 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                         'error_type': type(e).__name__,
                         'index': idx,
                         'traceback': None
-                    })
+                })
                 
                 # ВАЖНО: Даже при ошибке обновляем прогресс, чтобы не застрять
                 # Это гарантирует, что процесс не остановится из-за одной проблемной фотографии
@@ -1513,7 +1532,7 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
         
         # Пробрасываем исключение
         raise
-        
+    
     except Exception as e:
         error_msg = f"КРИТИЧЕСКАЯ ОШИБКА в process_event_photos для события {event_id}"
         logger.error(f"ERROR in process_event_photos for event {event_id}: {str(e)}", exc_info=True)

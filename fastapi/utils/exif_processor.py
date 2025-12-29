@@ -103,7 +103,7 @@ class EXIFProcessor:
             print(f"Error parsing datetime with regex: {str(e)}")
         
         return None
-    
+
     def normalize_orientation(self, image_path: str) -> None:
         """
         КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Повернуть изображение согласно EXIF и УДАЛИТЬ EXIF Orientation
@@ -120,21 +120,43 @@ class EXIFProcessor:
             img = Image.open(image_path)
             original_size = img.size
             
-            # Применяем ориентацию согласно EXIF
-            img = ImageOps.exif_transpose(img)
-            new_size = img.size
+            # Проверяем наличие EXIF данных
+            exif = img.getexif() if hasattr(img, 'getexif') else None
+            if not exif:
+                try:
+                    exif = img._getexif()
+                except:
+                    exif = None
             
+            # Получаем ориентацию из EXIF
+            orientation = None
+            if exif:
+                # Тег ориентации: 274 (0x0112)
+                orientation = exif.get(274) or exif.get(0x0112)
+                if orientation:
+                    logger.info(f"Found EXIF orientation tag: {orientation} (1=normal, 3=180°, 6=270°CW, 8=90°CCW)")
+            
+            # Применяем ориентацию согласно EXIF
+            # ImageOps.exif_transpose автоматически применяет правильный поворот
+            img_transposed = ImageOps.exif_transpose(img)
+            new_size = img_transposed.size
+            
+            # Проверяем, изменился ли размер (это означает, что была применена ориентация)
             if original_size != new_size:
-                logger.info(f"EXIF orientation applied: {original_size} -> {new_size}")
+                logger.info(f"EXIF orientation applied: {original_size} -> {new_size}, orientation tag: {orientation}")
+            elif orientation and orientation != 1:
+                # Если ориентация была не 1, но размер не изменился, возможно изображение уже повернуто
+                logger.info(f"EXIF orientation tag found: {orientation}, but image size unchanged (may already be rotated)")
             else:
                 logger.debug("No EXIF orientation change needed (image already in correct orientation)")
             
             # Конвертируем в RGB (важно для OpenCV / JPEG)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
+            if img_transposed.mode != "RGB":
+                img_transposed = img_transposed.convert("RGB")
             
             # Сохраняем БЕЗ EXIF (перезаписываем файл)
-            img.save(image_path, "JPEG", quality=95)
+            # Важно: не передаем exif=exif, чтобы удалить EXIF данные
+            img_transposed.save(image_path, "JPEG", quality=95, exif=b'')
             logger.info(f"Image normalized and saved without EXIF: {image_path}")
             
         except Exception as e:

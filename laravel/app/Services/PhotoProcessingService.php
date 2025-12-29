@@ -254,7 +254,7 @@ class PhotoProcessingService
                                     }
                                 }
                                 return false;
-                            });
+                        });
                         } else {
                             // Если нет задач (после фильтрации timeline), считаем что все завершено
                             $allCompleted = true;

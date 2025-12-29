@@ -80,7 +80,7 @@ class FaceRecognition:
         # Конвертируем BGR → RGB (cv2.imread возвращает BGR, InsightFace ожидает RGB)
         if len(img.shape) == 3 and img.shape[2] == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
+            
         # Нормализуем размер (не 4k вертикаль после EXIF)
         h, w = img.shape[:2]
         max_side = max(h, w)
