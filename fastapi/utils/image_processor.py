@@ -23,9 +23,9 @@ except ImportError:
 class ImageProcessor:
     """Обработка изображений: удаление EXIF, конвертация в WebP"""
     
-    def remove_exif(self, image_path: str, output_path: Optional[str] = None) -> str:
+    def remove_to_exif_and_rotate(self, image_path: str, output_path: Optional[str] = None) -> str:
         """
-        Удалить EXIF данные из изображения, но сохранить ориентацию
+        Удалить EXIF данные из изображения, применить ориентацию из EXIF и повернуть на 90 градусов
         
         Returns: путь к обработанному изображению
         """
@@ -160,6 +160,11 @@ class ImageProcessor:
         if img.mode != 'RGB':
             img = img.convert('RGB')
         
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Поворачиваем изображение на 90 градусов по часовой стрелке
+        # Это необходимо, так как фото сделанные горизонтально отображаются перевернутыми на сайте
+        logger.info(f"Rotating image 90 degrees clockwise before saving")
+        img = img.rotate(-90, expand=True)  # -90 = поворот по часовой стрелке
+        
         # Сохраняем без EXIF данных
         # ВАЖНО: Не используем exif=None, так как это вызывает ошибку в PIL
         # (PIL пытается проверить len(exif), но exif=None вызывает TypeError)
@@ -169,7 +174,7 @@ class ImageProcessor:
             # Сохраняем без параметра exif (самый безопасный способ)
             # При сохранении нового изображения без EXIF данных, PIL не включит EXIF метаданные
             img.save(output_path, "JPEG", quality=95)
-            logger.debug(f"Image saved without EXIF (no exif parameter): {output_path}")
+            logger.info(f"Image rotated, EXIF removed and saved: {output_path}")
         except Exception as e:
             logger.warning(f"Failed to save without exif parameter: {str(e)}, trying alternative method")
             # Если не сработало, пробуем создать новое изображение и скопировать данные
@@ -179,14 +184,22 @@ class ImageProcessor:
                 img_copy = Image.new('RGB', img.size)
                 img_copy.paste(img)
                 img_copy.save(output_path, "JPEG", quality=95)
-                logger.debug(f"Image saved without EXIF (via copy): {output_path}")
+                logger.info(f"Image rotated, EXIF removed and saved (via copy): {output_path}")
             except Exception as e2:
                 logger.error(f"Failed to save image: {str(e2)}", exc_info=True)
                 raise
         
-        logger.debug(f"Image saved without EXIF: {output_path}")
-        
         return output_path
+    
+    def remove_exif(self, image_path: str, output_path: Optional[str] = None) -> str:
+        """
+        Удалить EXIF данные из изображения, но сохранить ориентацию
+        DEPRECATED: Используйте remove_to_exif_and_rotate вместо этого
+        
+        Returns: путь к обработанному изображению
+        """
+        # Вызываем новую функцию для обратной совместимости
+        return self.remove_to_exif_and_rotate(image_path, output_path)
     
     def convert_to_webp(self, image_path: str, quality: int = 85) -> str:
         """Конвертировать изображение в WebP"""

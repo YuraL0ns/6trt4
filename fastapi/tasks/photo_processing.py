@@ -629,7 +629,7 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                     logger.info(f"Photo {photo.id}: Removing EXIF and applying rotation, saving to {original_photo_path}")
                     # Удаляем EXIF и применяем поворот (сохраняем в original_photo)
                     try:
-                        processed_path = image_processor.remove_exif(photo_path, output_path=original_photo_path)
+                        processed_path = image_processor.remove_to_exif_and_rotate(photo_path, output_path=original_photo_path)
                         if step_logger_remove_exif:
                             step_logger_remove_exif.info(f"EXIF removed and rotation applied successfully")
                             step_logger_remove_exif.info(f"Processed path: {processed_path}")
@@ -756,8 +756,10 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                             # ВАЖНО: Добавляем таймаут на уровне задачи, чтобы избежать зависаний
                             import time
                             start_time = time.time()
-                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id}, this may take up to 60 seconds...")
-                            faces_data = extract_faces_with_bboxes(processed_path, apply_exif=False)
+                            logger.info(f"Face search: Calling extract_faces_with_bboxes for photo {photo.id}...")
+                            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+                            # EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+                            faces_data = extract_faces_with_bboxes(processed_path)
                             elapsed_time = time.time() - start_time
                             logger.info(f"Face search: Extraction completed in {elapsed_time:.2f} seconds for photo {photo.id}")
                             if elapsed_time > 30:

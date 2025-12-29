@@ -609,7 +609,7 @@ class CeleryController extends Controller
         $event = Event::findOrFail($eventId);
         
         $request->validate([
-            'task_type' => 'required|in:timeline,remove_exif,watermark,face_search,number_search'
+            'task_type' => 'required|in:remove_exif,watermark,face_search,number_search' // timeline временно отключен
         ]);
         
         $taskType = $request->input('task_type');
@@ -623,8 +623,9 @@ class CeleryController extends Controller
             
             // Определяем, какие анализы нужно запустить
             // Для remove_exif и watermark всегда true, для остальных - только выбранный
+            // Timeline временно отключен
             $analyses = [
-                'timeline' => $taskType === 'timeline',
+                // 'timeline' => $taskType === 'timeline', // Timeline временно отключен
                 'remove_exif' => $taskType === 'remove_exif' || $taskType === 'watermark', // remove_exif нужен для watermark
                 'watermark' => $taskType === 'watermark',
                 'face_search' => $taskType === 'face_search',

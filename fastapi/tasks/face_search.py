@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.face_recognition import FaceRecognition
+from utils.face_recognition import get_face_recognition
 import os
 from typing import List, Dict
 
@@ -35,7 +35,8 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
     logger.setLevel(logging.DEBUG)
 
     db = SessionLocal()
-    face_recognition = FaceRecognition()
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №1: Используем singleton вместо создания нового экземпляра
+    face_recognition = get_face_recognition()
 
     try:
         logger.info(f"START search_similar_faces: event_id={event_id}, threshold={threshold}")
@@ -48,12 +49,9 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
             return {"error": error_msg, "results": []}
 
         # ---- 1) Извлекаем embedding запроса ----
-        # ВАЖНО: apply_exif=True применяет EXIF ориентацию к запросу
-        # Это необходимо, так как при индексации изображения уже повернуты через remove_exif
-        # и мы должны использовать ту же ориентацию для поиска.
-        # При индексации используется apply_exif=False (изображение уже обработано),
-        # поэтому для запроса используем apply_exif=True, чтобы корректно обработать ориентацию.
-        query_embedding = face_recognition.extract_embedding(query_image_path, apply_exif=True)
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+        # EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+        query_embedding = face_recognition.extract_embedding(query_image_path)
         if query_embedding is None:
             logger.warning("No face found in query image")
             return {"error": "No face found in query image", "results": []}
@@ -86,17 +84,18 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
             ).count()
             logger.info(f"Photos with face_encodings in event {event_id}: {has_encodings_count}")
             
-            # Используем более гибкий фильтр: либо has_faces=True, либо есть face_encodings
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем только face_encodings как источник истины
+            # has_faces оставляем как вспомогательное поле, не как фильтр
             q = db.query(Photo).filter(
-                Photo.event_id == event_id
-            ).filter(
-                (Photo.has_faces == True) | 
-                ((Photo.face_encodings.isnot(None)) & (Photo.face_encodings != []))
+                Photo.event_id == event_id,
+                Photo.face_encodings.isnot(None),
+                Photo.face_encodings != []
             )
         else:
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем только face_encodings как источник истины
             q = db.query(Photo).filter(
-                (Photo.has_faces == True) | 
-                ((Photo.face_encodings.isnot(None)) & (Photo.face_encodings != []))
+                Photo.face_encodings.isnot(None),
+                Photo.face_encodings != []
             )
 
         photos = q.all()
@@ -260,7 +259,8 @@ def extract_face_embeddings(image_path: str) -> List:
     logger = logging.getLogger(__name__)
     
     try:
-        face_recognition = FaceRecognition()
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №1: Используем singleton вместо создания нового экземпляра
+        face_recognition = get_face_recognition()
         faces_data = face_recognition.extract_faces_with_bboxes(image_path)
         
         if faces_data:
@@ -276,23 +276,23 @@ def extract_face_embeddings(image_path: str) -> List:
         return []
 
 
-def extract_faces_with_bboxes(image_path: str, apply_exif: bool = False) -> List[Dict]:
+def extract_faces_with_bboxes(image_path: str) -> List[Dict]:
     """
     Извлечь embeddings и bbox всех лиц на фотографии
     
+    КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+    EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+    
     Args:
         image_path: Путь к изображению
-        apply_exif: Применить EXIF ориентацию (по умолчанию False, так как при индексации 
-                   изображение уже обработано через remove_exif и повернуто)
     """
     import logging
     logger = logging.getLogger(__name__)
     
     try:
-        face_recognition = FaceRecognition()
-        # ВАЖНО: при индексации изображение уже повернуто через remove_exif,
-        # поэтому apply_exif=False по умолчанию
-        faces_data = face_recognition.extract_faces_with_bboxes(image_path, apply_exif=apply_exif)
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №1: Используем singleton вместо создания нового экземпляра
+        face_recognition = get_face_recognition()
+        faces_data = face_recognition.extract_faces_with_bboxes(image_path)
         
         if faces_data:
             logger.info(f"Extracted {len(faces_data)} face(s) with bboxes from {image_path}")

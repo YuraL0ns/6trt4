@@ -3,19 +3,28 @@ import numpy as np
 import cv2
 import os
 import pickle
-import tempfile
 from typing import List, Optional, Tuple, Dict
 from app.config import settings
-from PIL import Image, ImageOps
+import logging
+
+logger = logging.getLogger(__name__)
+
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №1: Singleton для FaceRecognition
+# Модель должна быть singleton на процесс, иначе InsightFace не инициализируется корректно
+_face_recognition_instance = None
+
+def get_face_recognition():
+    """Получить singleton экземпляр FaceRecognition"""
+    global _face_recognition_instance
+    if _face_recognition_instance is None:
+        _face_recognition_instance = FaceRecognition()
+    return _face_recognition_instance
 
 
 class FaceRecognition:
     """Распознавание лиц с помощью InsightFace"""
     
     def __init__(self):
-        import logging
-        logger = logging.getLogger(__name__)
-        
         # Загружаем модель InsightFace - используем более легковесную модель antelopev2
         # antelopev2 легче чем buffalo_l, но все еще хорошо распознает лица
         # Альтернативы: 'buffalo_s' (еще легче, но менее точная) или 'antelopev2' (баланс)
@@ -41,7 +50,8 @@ class FaceRecognition:
                 # ВАЖНО: Увеличиваем размер детекции для лучшего распознавания лиц
                 # det_size=(640, 640) - базовый размер, можно увеличить до (1280, 1280) для больших изображений
                 # Но это увеличит время обработки, поэтому используем баланс
-                self.model.prepare(ctx_id=0, det_size=(640, 640))
+                # КРИТИЧНО: ctx_id=-1 для CPU (ctx_id=0 для GPU, но GPU может не быть)
+                self.model.prepare(ctx_id=-1, det_size=(640, 640))
                 logger.info(f"FaceRecognition initialized successfully with {model_name} model")
                 break
             except AssertionError as e:
@@ -61,44 +71,36 @@ class FaceRecognition:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
     
-    def _apply_exif_orientation(self, image_path: str) -> Optional[str]:
+    def _prepare_image(self, img: np.ndarray) -> np.ndarray:
         """
-        Применить EXIF ориентацию к изображению и сохранить во временный файл
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №2: Подготовка изображения для InsightFace
+        - Конвертация BGR → RGB
+        - Resize до максимум 1280px (InsightFace ожидает нормальный размер)
+        """
+        # Конвертируем BGR → RGB (cv2.imread возвращает BGR, InsightFace ожидает RGB)
+        if len(img.shape) == 3 and img.shape[2] == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        Returns: путь к обработанному изображению или None если ошибка
-        """
-        try:
-            img = Image.open(image_path)
-            # Применяем EXIF ориентацию
-            img = ImageOps.exif_transpose(img)
-            
-            # Сохраняем во временный файл
-            temp_fd, temp_path = tempfile.mkstemp(suffix='.jpg')
-            os.close(temp_fd)
-            
-            # Конвертируем в RGB если нужно
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            img.save(temp_path, "JPEG", quality=95)
-            return temp_path
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to apply EXIF orientation to {image_path}: {str(e)}")
-            return None
+        # Нормализуем размер (не 4k вертикаль после EXIF)
+        h, w = img.shape[:2]
+        max_side = max(h, w)
+        if max_side > 1280:
+            scale = 1280 / max_side
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            logger.debug(f"Image resized from {w}x{h} to {new_w}x{new_h}")
+        
+        return img
     
-    def extract_embedding(self, image_path: str, apply_exif: bool = True) -> Optional[np.ndarray]:
+    def extract_embedding(self, image_path: str) -> Optional[np.ndarray]:
         """
         Извлечь embedding одного лица (первое найденное)
         
-        Args:
-            image_path: Путь к изображению
-            apply_exif: Применить EXIF ориентацию перед обработкой (по умолчанию True)
-                       ВАЖНО: При поиске используйте apply_exif=True, чтобы соответствовать
-                       ориентации изображений при индексации (если они были повернуты через remove_exif)
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
         """
-        embeddings = self.extract_all_embeddings(image_path, apply_exif=apply_exif)
+        embeddings = self.extract_all_embeddings(image_path)
         if embeddings and len(embeddings) > 0:
             # Возвращаем первое лицо с правильным типом
             embedding = embeddings[0]
@@ -107,113 +109,62 @@ class FaceRecognition:
             return embedding.astype("float32")
         return None
     
-    def extract_all_embeddings(self, image_path: str, apply_exif: bool = True) -> List[np.ndarray]:
+    def extract_all_embeddings(self, image_path: str) -> List[np.ndarray]:
         """
         Извлечь embeddings всех лиц на изображении
         
-        Args:
-            image_path: Путь к изображению
-            apply_exif: Применить EXIF ориентацию перед обработкой (по умолчанию True)
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
         """
-        temp_path = None
         try:
-            # Применяем EXIF ориентацию если нужно
-            if apply_exif:
-                temp_path = self._apply_exif_orientation(image_path)
-                if temp_path:
-                    image_path = temp_path
-            
             img = cv2.imread(image_path)
             if img is None:
+                logger.warning(f"Failed to load image: {image_path}")
                 return []
             
-            # ВАЖНО: Добавляем таймаут для InsightFace, чтобы избежать зависаний
-            import time
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-            import logging
-            logger = logging.getLogger(__name__)
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №2: Подготавливаем изображение (BGR→RGB, resize)
+            img = self._prepare_image(img)
             
-            faces = []
-            timeout_seconds = 30  # 30 секунд на обработку изображения
-            
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №5: Убран ThreadPoolExecutor
+            # InsightFace не thread-safe, onnxruntime может зависать в thread'ах
+            # Если зависает — проблема выше (модель/размер/контекст)
             try:
-                def get_faces():
-                    return self.model.get(img)
-                
-                # Используем ThreadPoolExecutor для таймаута
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(get_faces)
-                    try:
-                        faces = future.result(timeout=timeout_seconds)
-                    except FuturesTimeoutError:
-                        logger.warning(f"InsightFace timeout on image after {timeout_seconds}s, skipping")
-                        # Пытаемся отменить задачу
-                        future.cancel()
-                        faces = []
-                    except Exception as e:
-                        logger.warning(f"Error in InsightFace processing: {str(e)}")
-                        faces = []
+                faces = self.model.get(img)
+                logger.info(f"Found {len(faces)} raw face(s) from InsightFace")
             except Exception as e:
-                logger.warning(f"Error in face detection with timeout: {str(e)}, trying without timeout")
-                # Fallback: пробуем без таймаута (но с ограничением времени)
-                try:
-                    start_time = time.time()
-                    faces = self.model.get(img)
-                    elapsed = time.time() - start_time
-                    if elapsed > 10:
-                        logger.warning(f"Face detection took {elapsed:.2f}s (slow)")
-                except Exception as fallback_error:
-                    logger.error(f"Error in face detection fallback: {str(fallback_error)}")
-                    faces = []
+                logger.error(f"Error in InsightFace model.get: {str(e)}", exc_info=True)
+                return []
             
             embeddings = [face.embedding.astype("float32") for face in faces]
             return embeddings
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Error extracting face embeddings: {str(e)}", exc_info=True)
             return []
-        finally:
-            # Удаляем временный файл если он был создан
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
     
-    def extract_faces_with_bboxes(self, image_path: str, apply_exif: bool = True) -> List[Dict]:
+    def extract_faces_with_bboxes(self, image_path: str) -> List[Dict]:
         """
         Извлечь embeddings и bbox всех лиц на изображении
         
-        Args:
-            image_path: Путь к изображению
-            apply_exif: Применить EXIF ориентацию перед обработкой (по умолчанию True)
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
         
         Returns: список словарей с ключами 'embedding' и 'bbox'
         bbox: [x1, y1, x2, y2] - координаты bounding box
         """
-        temp_path = None
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-            
             logger.debug(f"Extracting faces from: {image_path}")
-            
-            # Применяем EXIF ориентацию если нужно
-            if apply_exif:
-                temp_path = self._apply_exif_orientation(image_path)
-                if temp_path:
-                    image_path = temp_path
             
             img = cv2.imread(image_path)
             if img is None:
                 logger.warning(f"Failed to load image: {image_path}")
                 return []
             
-            # ВАЖНО: Логируем информацию об изображении для диагностики
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №2: Подготавливаем изображение (BGR→RGB, resize)
+            img = self._prepare_image(img)
+            
             logger.info(f"Image loaded: shape={img.shape}, dtype={img.dtype}")
             
-            # Проверяем размер изображения - если слишком маленькое, может быть проблема с детекцией
+            # Проверяем размер изображения
             if img.shape[0] < 100 or img.shape[1] < 100:
                 logger.warning(f"Image is very small: {img.shape}, face detection may not work well")
             
@@ -222,85 +173,22 @@ class FaceRecognition:
                 logger.error("FaceRecognition model is not initialized")
                 return []
             
-            # ВАЖНО: Добавляем таймаут для InsightFace, чтобы избежать зависаний
-            # InsightFace может зависать на больших или сложных изображениях
-            # Используем concurrent.futures для более надежного таймаута
-            import time
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-            
-            faces = []
-            timeout_seconds = 60  # Увеличено до 60 секунд на обработку изображения (было 30)
-            
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №5: Убран ThreadPoolExecutor
+            # InsightFace не thread-safe, onnxruntime может зависать в thread'ах
             try:
-                def get_faces():
-                    try:
-                        return self.model.get(img)
-                    except Exception as e:
-                        logger.error(f"Error in get_faces: {str(e)}")
-                        raise
-                
-                # Используем ThreadPoolExecutor для таймаута
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(get_faces)
-                    try:
-                        faces = future.result(timeout=timeout_seconds)
-                        if faces:
-                            logger.info(f"Found {len(faces)} face(s) in image")
-                        else:
-                            logger.info("No faces found in image")
-                    except FuturesTimeoutError:
-                        logger.warning(f"InsightFace timeout on image after {timeout_seconds}s, trying fallback")
-                        # Пытаемся отменить задачу
-                        future.cancel()
-                        # Fallback: пробуем без таймаута для критических случаев
-                        try:
-                            logger.info("Attempting fallback face detection without timeout")
-                            start_time = time.time()
-                            faces = self.model.get(img)
-                            elapsed = time.time() - start_time
-                            if elapsed > 10:
-                                logger.warning(f"Face detection took {elapsed:.2f}s (slow)")
-                            if faces:
-                                logger.info(f"Found {len(faces)} face(s) in image (fallback)")
-                            else:
-                                logger.info("No faces found in image (fallback)")
-                        except Exception as fallback_error:
-                            logger.error(f"Error in face detection fallback: {str(fallback_error)}")
-                            faces = []
-                    except Exception as e:
-                        logger.warning(f"Error in InsightFace processing: {str(e)}")
-                        # Fallback: пробуем без таймаута
-                        try:
-                            logger.info("Attempting fallback face detection after error")
-                            faces = self.model.get(img)
-                            if faces:
-                                logger.info(f"Found {len(faces)} face(s) in image (fallback after error)")
-                        except Exception as fallback_error:
-                            logger.error(f"Error in face detection fallback: {str(fallback_error)}")
-                            faces = []
+                faces = self.model.get(img)
+                if faces:
+                    logger.info(f"Found {len(faces)} raw face(s) from InsightFace")
+                else:
+                    logger.info("No raw faces found from InsightFace")
             except Exception as e:
-                logger.warning(f"Error in face detection with timeout: {str(e)}, trying without timeout")
-                # Fallback: пробуем без таймаута (но с ограничением времени)
-                try:
-                    start_time = time.time()
-                    faces = self.model.get(img)
-                    elapsed = time.time() - start_time
-                    if elapsed > 10:
-                        logger.warning(f"Face detection took {elapsed:.2f}s (slow)")
-                    if faces:
-                        logger.info(f"Found {len(faces)} face(s) in image (fallback)")
-                    else:
-                        logger.info("No faces found in image (fallback)")
-                except Exception as fallback_error:
-                    logger.error(f"Error in face detection fallback: {str(fallback_error)}")
-                    faces = []
+                logger.error(f"Error in InsightFace model.get: {str(e)}", exc_info=True)
+                return []
             
             result = []
-            # ВАЖНО: Минимальный порог confidence для детекции лиц
-            # InsightFace возвращает det_score от 0 до 1, где 1 - максимальная уверенность
-            # По умолчанию InsightFace фильтрует лица с det_score < 0.5, но мы понижаем для лучшего распознавания
-            # ВАЖНО: Понижаем порог до 0.2 для более чувствительного распознавания
-            min_det_score = 0.2  # Минимальный порог confidence (понижено с 0.3 до 0.2 для лучшего распознавания)
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №6: min_det_score = 0.35 (было 0.2)
+            # embeddings с плохих детекций → мусор, потом cosine distance не проходит
+            min_det_score = 0.35  # Минимальный порог confidence для детекции лиц
             
             for idx, face in enumerate(faces):
                 try:
@@ -309,13 +197,12 @@ class FaceRecognition:
                     
                     # Фильтруем лица с низким confidence
                     if det_score < min_det_score:
-                        logger.info(f"Face {idx + 1} filtered out: det_score={det_score:.3f} < min_det_score={min_det_score}")
+                        logger.debug(f"Face {idx + 1} filtered out: det_score={det_score:.3f} < min_det_score={min_det_score}")
                         continue
                     
                     # bbox: [x1, y1, x2, y2]
                     bbox = face.bbox.tolist() if hasattr(face.bbox, 'tolist') else list(face.bbox)
                     
-                    # ВАЖНО: Логируем на уровне info для диагностики
                     logger.info(f"Face {idx + 1}: bbox={bbox}, det_score={det_score:.3f}")
                     
                     # Проверяем, что embedding не пустой
@@ -334,20 +221,11 @@ class FaceRecognition:
                     logger.error(f"Error processing face {idx + 1}: {str(e)}", exc_info=True)
                     continue
             
-            logger.info(f"Successfully extracted {len(result)} face(s) from {image_path}")
+            logger.info(f"Successfully extracted {len(result)} face(s) from {image_path} after filtering")
             return result
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Error extracting faces with bboxes from {image_path}: {str(e)}", exc_info=True)
             return []
-        finally:
-            # Удаляем временный файл если он был создан
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
     
     def compare_embeddings(
         self,
@@ -391,7 +269,5 @@ class FaceRecognition:
             with open(file_path, 'rb') as f:
                 return pickle.load(f)
         except Exception as e:
-            print(f"Error loading embeddings: {str(e)}")
+            logger.error(f"Error loading embeddings: {str(e)}")
             return None
-
-

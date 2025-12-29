@@ -871,7 +871,7 @@ class EventController extends Controller
             $validated = $request->validate([
                 'price' => 'required|numeric|min:0',
                 'analyses' => 'required|array',
-                'analyses.timeline' => 'nullable|boolean',
+                // 'analyses.timeline' => 'nullable|boolean', // Timeline временно отключен
                 'analyses.remove_exif' => 'nullable|boolean',
                 'analyses.watermark' => 'nullable|boolean',
                 'analyses.face_search' => 'nullable|boolean',

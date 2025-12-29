@@ -224,35 +224,56 @@ class PhotoProcessingService
                         // Перезагружаем задачи после обновления
                         $event->load('celeryTasks');
                         
+                        // ВАЖНО: Обновляем статусы всех задач на основе РЕАЛЬНОГО прогресса из event_info.json
+                        // Это критично, так как одна Celery задача выполняет все анализы последовательно
+                        $this->updateAllTasksFromEventInfo($event);
+                        
+                        // Перезагружаем задачи после обновления
+                        $event->load('celeryTasks');
+                        
                         // Проверяем, все ли задачи завершены
                         // КРИТИЧНО: Задача считается завершенной только если:
                         // 1. Статус 'completed' или 'failed'
                         // 2. И прогресс >= 95% (для completed) или прогресс > 0 (для failed)
-                        $allCompleted = $event->celeryTasks->every(function ($t) {
-                            if (in_array($t->status, ['completed', 'failed'])) {
-                                // Для завершенных задач проверяем прогресс
-                                if ($t->status === 'completed') {
-                                    return $t->progress >= 95;
-                                } else {
-                                    // Для failed задач прогресс может быть любым
-                                    return true;
-                                }
-                            }
-                            return false;
+                        // 3. И задача не является timeline (timeline временно отключен)
+                        $filteredTasks = $event->celeryTasks->filter(function ($t) {
+                            // Пропускаем timeline задачи
+                            return $t->task_type !== 'timeline';
                         });
+                        
+                        $allCompleted = false;
+                        if ($filteredTasks->count() > 0) {
+                            $allCompleted = $filteredTasks->every(function ($t) {
+                                if (in_array($t->status, ['completed', 'failed'])) {
+                                    // Для завершенных задач проверяем прогресс
+                                    if ($t->status === 'completed') {
+                                        return $t->progress >= 95;
+                                    } else {
+                                        // Для failed задач прогресс может быть любым
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+                        } else {
+                            // Если нет задач (после фильтрации timeline), считаем что все завершено
+                            $allCompleted = true;
+                        }
 
                         \Log::info("PhotoProcessingService::updateTaskStatus: Checking if all tasks completed", [
                             'event_id' => $event->id,
                             'event_status' => $event->status,
                             'all_completed' => $allCompleted,
                             'tasks_count' => $event->celeryTasks->count(),
+                            'tasks_count_filtered' => $event->celeryTasks->filter(function ($t) { return $t->task_type !== 'timeline'; })->count(),
                             'tasks_statuses' => $event->celeryTasks->pluck('status')->toArray(),
                             'tasks_details' => $event->celeryTasks->map(function($t) {
                                 return [
                                     'id' => $t->id,
                                     'task_id' => $t->task_id,
                                     'task_type' => $t->task_type,
-                                    'status' => $t->status
+                                    'status' => $t->status,
+                                    'progress' => $t->progress
                                 ];
                             })->toArray(),
                             'current_task_status' => $status['state'],
@@ -518,8 +539,8 @@ class PhotoProcessingService
                 // Определяем статус на основе прогресса
                 // Задача считается завершенной только если обработано >= 95% фотографий
                 $newStatus = 'pending';
-                if ($totalPhotos > 0) {
-                    $completionPercent = (($readyCount + $errorCount) / $totalPhotos) * 100;
+                if ($actualTotal > 0) {
+                    $completionPercent = (($readyCount + $errorCount) / $actualTotal) * 100;
                     if ($completionPercent >= 95) {
                         $newStatus = 'completed';
                     } elseif ($readyCount > 0 || $errorCount > 0 || $processingCount > 0) {

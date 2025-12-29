@@ -328,7 +328,7 @@
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-300 mb-2">Типы анализа</label>
                 <div class="space-y-2">
-                    <x-checkbox label="Timeline (извлечение даты из EXIF)" name="analyses[timeline]" />
+                    <!-- Timeline временно отключен -->
                     <!-- Скрытые поля для обязательных анализов -->
                     <input type="hidden" name="analyses[remove_exif]" value="1">
                     <input type="hidden" name="analyses[watermark]" value="1">
