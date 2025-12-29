@@ -108,44 +108,44 @@ class ImageProcessor:
         except (AttributeError, Exception) as e:
             logger.warning(f"Could not apply EXIF orientation via exif_transpose: {str(e)}")
             # Если exif_transpose не работает, пробуем применить вручную только если есть EXIF ориентация
-        if exif_orientation and exif_orientation != 1:
+            if exif_orientation and exif_orientation != 1:
                 logger.info(f"Trying manual EXIF orientation as fallback: {exif_orientation}")
-            try:
-                # Используем старые константы для совместимости с разными версиями PIL
                 try:
-                    FLIP_LEFT_RIGHT = Image.Transpose.FLIP_LEFT_RIGHT
-                    FLIP_TOP_BOTTOM = Image.Transpose.FLIP_TOP_BOTTOM
-                except AttributeError:
-                    # Старые версии PIL используют другие константы
-                    FLIP_LEFT_RIGHT = Image.FLIP_LEFT_RIGHT
-                    FLIP_TOP_BOTTOM = Image.FLIP_TOP_BOTTOM
-                
-                if exif_orientation == 2:
-                    img = img.transpose(FLIP_LEFT_RIGHT)
-                    logger.info(f"Applied FLIP_LEFT_RIGHT (orientation 2)")
-                elif exif_orientation == 3:
-                    img = img.rotate(180, expand=True)
-                    logger.info(f"Applied 180° rotation (orientation 3)")
-                elif exif_orientation == 4:
-                    img = img.transpose(FLIP_TOP_BOTTOM)
-                    logger.info(f"Applied FLIP_TOP_BOTTOM (orientation 4)")
-                elif exif_orientation == 5:
-                    img = img.transpose(FLIP_LEFT_RIGHT).rotate(90, expand=True)
-                    logger.info(f"Applied FLIP_LEFT_RIGHT + 90° (orientation 5)")
-                elif exif_orientation == 6:
-                    img = img.rotate(-90, expand=True)
-                    logger.info(f"Applied -90° rotation (orientation 6)")
-                elif exif_orientation == 7:
-                    img = img.transpose(FLIP_LEFT_RIGHT).rotate(-90, expand=True)
-                    logger.info(f"Applied FLIP_LEFT_RIGHT + -90° (orientation 7)")
-                elif exif_orientation == 8:
-                    img = img.rotate(90, expand=True)
-                    logger.info(f"Applied 90° rotation (orientation 8)")
-                
-                new_size = img.size
-                orientation_applied = True
-                logger.info(f"Manual EXIF orientation applied successfully: {original_size} -> {new_size}")
-            except Exception as manual_error:
+                    # Используем старые константы для совместимости с разными версиями PIL
+                    try:
+                        FLIP_LEFT_RIGHT = Image.Transpose.FLIP_LEFT_RIGHT
+                        FLIP_TOP_BOTTOM = Image.Transpose.FLIP_TOP_BOTTOM
+                    except AttributeError:
+                        # Старые версии PIL используют другие константы
+                        FLIP_LEFT_RIGHT = Image.FLIP_LEFT_RIGHT
+                        FLIP_TOP_BOTTOM = Image.FLIP_TOP_BOTTOM
+                    
+                    if exif_orientation == 2:
+                        img = img.transpose(FLIP_LEFT_RIGHT)
+                        logger.info(f"Applied FLIP_LEFT_RIGHT (orientation 2)")
+                    elif exif_orientation == 3:
+                        img = img.rotate(180, expand=True)
+                        logger.info(f"Applied 180° rotation (orientation 3)")
+                    elif exif_orientation == 4:
+                        img = img.transpose(FLIP_TOP_BOTTOM)
+                        logger.info(f"Applied FLIP_TOP_BOTTOM (orientation 4)")
+                    elif exif_orientation == 5:
+                        img = img.transpose(FLIP_LEFT_RIGHT).rotate(90, expand=True)
+                        logger.info(f"Applied FLIP_LEFT_RIGHT + 90° (orientation 5)")
+                    elif exif_orientation == 6:
+                        img = img.rotate(-90, expand=True)
+                        logger.info(f"Applied -90° rotation (orientation 6)")
+                    elif exif_orientation == 7:
+                        img = img.transpose(FLIP_LEFT_RIGHT).rotate(-90, expand=True)
+                        logger.info(f"Applied FLIP_LEFT_RIGHT + -90° (orientation 7)")
+                    elif exif_orientation == 8:
+                        img = img.rotate(90, expand=True)
+                        logger.info(f"Applied 90° rotation (orientation 8)")
+                    
+                    new_size = img.size
+                    orientation_applied = True
+                    logger.info(f"Manual EXIF orientation applied successfully: {original_size} -> {new_size}")
+                except Exception as manual_error:
                     logger.error(f"Manual orientation also failed: {str(manual_error)}")
         
         # Создаем новое изображение без EXIF

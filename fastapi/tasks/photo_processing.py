@@ -914,7 +914,7 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                                 # ВАЖНО: Явно сохраняем изменения в БД
                                 try:
                                     db.add(photo)
-                                db.commit()
+                                    db.commit()
                                     logger.info(f"Face search: Saved has_faces=False to DB for photo {photo.id}")
                                 except Exception as commit_error:
                                     logger.error(f"Face search: Error committing no-faces to DB: {str(commit_error)}", exc_info=True)
@@ -1161,13 +1161,13 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                 # Сохраняем информацию о неудачной фотографии
                 # ВАЖНО: Используем глобальный traceback, импортированный в начале файла
                 try:
-                failed_photos.append({
-                    'photo_id': str(photo.id),
-                    'error': str(e),
+                    failed_photos.append({
+                        'photo_id': str(photo.id),
+                        'error': str(e),
                         'error_type': type(e).__name__,
                         'index': idx,
                         'traceback': traceback.format_exc()
-                    })
+                        })
                 except Exception as tb_error:
                     # Если traceback не доступен, сохраняем без него
                     failed_photos.append({

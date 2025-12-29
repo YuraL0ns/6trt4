@@ -138,7 +138,7 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
 
                 # Преобразуем в numpy массивы с правильным типом
                 try:
-                emb_list = [np.array(e, dtype=np.float32) for e in emb_list]
+                    emb_list = [np.array(e, dtype=np.float32) for e in emb_list]
                     # Проверяем, что все embeddings имеют правильную форму
                     emb_list = [emb for emb in emb_list if emb.ndim == 1 and len(emb) > 0]
                 except Exception as e:
@@ -164,7 +164,7 @@ def search_similar_faces(self, query_image_path: str, event_id: str = None, thre
                     logger.warning(f"Photo {photo.id}: Inconsistent embedding sizes, filtering...")
                     emb_list = [emb for emb in emb_list if len(emb) == first_emb_len]
                     if not emb_list:
-                    continue
+                        continue
 
                 logger.debug(f"Photo {photo.id}: {len(emb_list)} embeddings, dtype: {emb_list[0].dtype}, shape: {emb_list[0].shape}")
                 

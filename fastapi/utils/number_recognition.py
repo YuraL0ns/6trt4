@@ -100,7 +100,7 @@ class NumberRecognition:
                         future = executor.submit(read_processed)
                         try:
                             results_processed = future.result(timeout=timeout_seconds)
-                self.logger.info(f"EasyOCR found {len(results_processed)} text regions in processed image")
+                            self.logger.info(f"EasyOCR found {len(results_processed)} text regions in processed image")
                             if results_processed:
                                 # Логируем первые 5 результатов для диагностики
                                 sample_results = [(r[1] if len(r) > 1 else 'N/A', r[2] if len(r) > 2 else 'N/A') for r in results_processed[:5]]
@@ -125,7 +125,7 @@ class NumberRecognition:
                         future = executor.submit(read_original)
                         try:
                             results_original = future.result(timeout=timeout_seconds)
-                self.logger.info(f"EasyOCR found {len(results_original)} text regions in original image")
+                            self.logger.info(f"EasyOCR found {len(results_original)} text regions in original image")
                             if results_original:
                                 # Логируем первые 5 результатов для диагностики
                                 sample_results = [(r[1] if len(r) > 1 else 'N/A', r[2] if len(r) > 2 else 'N/A') for r in results_original[:5]]
@@ -181,7 +181,7 @@ class NumberRecognition:
                         if confidence < 0.5:
                             self.logger.warning(f"Added number with low confidence: '{cleaned_text}' (confidence: {confidence:.2f})")
                         else:
-                        self.logger.info(f"Added number: '{cleaned_text}' (confidence: {confidence:.2f})")
+                            self.logger.info(f"Added number: '{cleaned_text}' (confidence: {confidence:.2f})")
             
             self.logger.info(f"Number extraction completed. Found {len(numbers)} unique numbers: {numbers}")
             return numbers

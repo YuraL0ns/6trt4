@@ -106,33 +106,33 @@ def search_by_numbers(self, query_image_path: str, event_id: str = None):
                                 # Проверяем, что совпадающая часть достаточно длинная
                                 min_len = min(len(query_clean), len(photo_clean))
                                 if min_len >= 2:
-                                results.append({
-                                    "photo_id": photo.id,
-                                    "matched_number": photo_num,
-                                    "query_number": query_num,
-                                    "match_type": "partial"
-                                })
+                                    results.append({
+                                        "photo_id": photo.id,
+                                        "matched_number": photo_num,
+                                        "query_number": query_num,
+                                        "match_type": "partial"
+                                    })
                                     photo_matched = True
                                 break
                         
                         # Проверка схожести для номеров одинаковой длины (для опечаток OCR)
                         if len(query_clean) == len(photo_clean) and len(query_clean) >= 3:
-                                # Вычисляем расстояние Хэмминга (количество разных позиций)
-                                differences = sum(1 for a, b in zip(query_clean, photo_clean) if a != b)
+                            # Вычисляем расстояние Хэмминга (количество разных позиций)
+                            differences = sum(1 for a, b in zip(query_clean, photo_clean) if a != b)
                             # Для номеров длиной 3-4: допускаем 1 ошибку
                             # Для номеров длиной 5-6: допускаем 2 ошибки
                             # Для номеров длиной 7+: допускаем до 20% ошибок
                             max_diff = 1 if len(query_clean) <= 4 else (2 if len(query_clean) <= 6 else max(1, len(query_clean) // 5))
                             
                             if differences <= max_diff:
-                                    results.append({
-                                        "photo_id": photo.id,
-                                        "matched_number": photo_num,
-                                        "query_number": query_num,
-                                        "match_type": "similar"
-                                    })
+                                results.append({
+                                    "photo_id": photo.id,
+                                    "matched_number": photo_num,
+                                    "query_number": query_num,
+                                    "match_type": "similar"
+                                })
                                 photo_matched = True
-                                    break
+                                break
                 
                 # Обновляем прогресс
                 if idx % 10 == 0:
