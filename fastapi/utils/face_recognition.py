@@ -97,8 +97,9 @@ class FaceRecognition:
         """
         Извлечь embedding одного лица (первое найденное)
         
-        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
-        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ в начале пайплайна через normalize_orientation()
+        После этого изображение уже нормализовано и не содержит EXIF
         """
         embeddings = self.extract_all_embeddings(image_path)
         if embeddings and len(embeddings) > 0:
@@ -113,8 +114,9 @@ class FaceRecognition:
         """
         Извлечь embeddings всех лиц на изображении
         
-        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
-        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ в начале пайплайна через normalize_orientation()
+        После этого изображение уже нормализовано и не содержит EXIF
         """
         try:
             img = cv2.imread(image_path)
@@ -145,8 +147,9 @@ class FaceRecognition:
         """
         Извлечь embeddings и bbox всех лиц на изображении
         
-        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ №3: Убран параметр apply_exif
-        EXIF применяется ТОЛЬКО ОДИН РАЗ при загрузке фото через remove_exif_and_rotate
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убран параметр apply_exif
+        EXIF применяется ТОЛЬКО ОДИН РАЗ в начале пайплайна через normalize_orientation()
+        После этого изображение уже нормализовано и не содержит EXIF
         
         Returns: список словарей с ключами 'embedding' и 'bbox'
         bbox: [x1, y1, x2, y2] - координаты bounding box

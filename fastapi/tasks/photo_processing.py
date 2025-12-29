@@ -626,18 +626,27 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
                     if step_logger_remove_exif:
                         step_logger_remove_exif.info(f"Output photo path: {original_photo_path}")
                     
-                    logger.info(f"Photo {photo.id}: Removing EXIF and applying rotation, saving to {original_photo_path}")
-                    # Удаляем EXIF и применяем поворот (сохраняем в original_photo)
+                    logger.info(f"Photo {photo.id}: Normalizing EXIF orientation and saving to {original_photo_path}")
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Применяем EXIF ориентацию ОДИН РАЗ в начале пайплайна
+                    # Сначала копируем файл в original_photo, потом нормализуем ориентацию
                     try:
-                        processed_path = image_processor.remove_to_exif_and_rotate(photo_path, output_path=original_photo_path)
+                        import shutil
+                        # Копируем файл в original_photo
+                        shutil.copy2(photo_path, original_photo_path)
+                        logger.info(f"Photo {photo.id}: Copied to {original_photo_path}")
+                        
+                        # Нормализуем ориентацию (применяет EXIF и удаляет его)
+                        exif_processor.normalize_orientation(original_photo_path)
+                        
+                        processed_path = original_photo_path
                         if step_logger_remove_exif:
-                            step_logger_remove_exif.info(f"EXIF removed and rotation applied successfully")
+                            step_logger_remove_exif.info(f"EXIF orientation normalized successfully")
                             step_logger_remove_exif.info(f"Processed path: {processed_path}")
-                        logger.info(f"Photo {photo.id}: EXIF removed and rotation applied successfully")
+                        logger.info(f"Photo {photo.id}: EXIF orientation normalized successfully")
                     except Exception as exif_error:
                         if step_logger_remove_exif:
-                            step_logger_remove_exif.error(f"Error removing EXIF: {str(exif_error)}", exc_info=True)
-                        logger.error(f"Photo {photo.id}: Error removing EXIF: {str(exif_error)}", exc_info=True)
+                            step_logger_remove_exif.error(f"Error normalizing EXIF orientation: {str(exif_error)}", exc_info=True)
+                        logger.error(f"Photo {photo.id}: Error normalizing EXIF orientation: {str(exif_error)}", exc_info=True)
                         raise
                     
                     # Обновляем original_path в базе данных (относительный путь)

@@ -1,7 +1,10 @@
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.ExifTags import TAGS
 from datetime import datetime
 from typing import Optional, Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class EXIFProcessor:
@@ -100,5 +103,42 @@ class EXIFProcessor:
             print(f"Error parsing datetime with regex: {str(e)}")
         
         return None
+    
+    def normalize_orientation(self, image_path: str) -> None:
+        """
+        КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Повернуть изображение согласно EXIF и УДАЛИТЬ EXIF Orientation
+        Перезаписывает файл на месте
+        
+        Это ключевая функция всего проекта - EXIF применяется ОДИН РАЗ в начале пайплайна,
+        после этого EXIF удаляется навсегда, и дальше ВСЁ работает с "чистым" изображением.
+        
+        Args:
+            image_path: Путь к изображению (будет перезаписан)
+        """
+        try:
+            logger.info(f"Normalizing EXIF orientation for: {image_path}")
+            img = Image.open(image_path)
+            original_size = img.size
+            
+            # Применяем ориентацию согласно EXIF
+            img = ImageOps.exif_transpose(img)
+            new_size = img.size
+            
+            if original_size != new_size:
+                logger.info(f"EXIF orientation applied: {original_size} -> {new_size}")
+            else:
+                logger.debug("No EXIF orientation change needed (image already in correct orientation)")
+            
+            # Конвертируем в RGB (важно для OpenCV / JPEG)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            
+            # Сохраняем БЕЗ EXIF (перезаписываем файл)
+            img.save(image_path, "JPEG", quality=95)
+            logger.info(f"Image normalized and saved without EXIF: {image_path}")
+            
+        except Exception as e:
+            logger.error(f"Error normalizing EXIF orientation for {image_path}: {str(e)}", exc_info=True)
+            raise
 
 
