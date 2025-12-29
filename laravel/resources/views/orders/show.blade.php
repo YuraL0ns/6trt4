@@ -34,13 +34,19 @@
     </x-card>
 
     <x-card title="Фотографии в заказе">
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            @foreach($order->items as $item)
-                <div class="aspect-square bg-gray-800 rounded-lg overflow-hidden">
-                    <img src="{{ $item->photo->s3_custom_url ?? Storage::url($item->photo->custom_path) }}" alt="Photo" class="w-full h-full object-cover">
-                </div>
-            @endforeach
-        </div>
+        @if($order->status !== 'paid')
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                @foreach($order->items as $item)
+                    <div class="aspect-square bg-gray-800 rounded-lg overflow-hidden">
+                        <img src="{{ $item->photo->s3_custom_url ?? Storage::url($item->photo->custom_path) }}" alt="Photo" class="w-full h-full object-cover">
+                    </div>
+                @endforeach
+            </div>
+        @else
+            <p class="text-sm text-gray-300 mb-4">
+                Заказ оплачен. Вы можете скачать архив с оригинальными фотографиями без водяных знаков.
+            </p>
+        @endif
         
         @if($order->status === 'paid' && $order->zip_path)
             <div class="mt-6">
