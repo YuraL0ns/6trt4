@@ -64,7 +64,7 @@
                 </div>
                 
                 <div class="mt-6">
-                    {{ $photos->links() }}
+                    {{ $photos->links('vendor.pagination.default') }}
                 </div>
             @else
                 <x-empty-state 

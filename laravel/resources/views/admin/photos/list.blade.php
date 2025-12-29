@@ -227,7 +227,7 @@
 
             <!-- Пагинация -->
             <div class="px-4 py-3 bg-[#121212] border-t border-gray-800">
-                {{ $photos->links() }}
+                {{ $photos->links('vendor.pagination.default') }}
             </div>
         </div>
     @else

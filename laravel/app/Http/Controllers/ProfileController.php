@@ -20,7 +20,8 @@ class ProfileController extends Controller
      */
     public function index()
     {
-        $user = Auth::user();
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем пользователя из базы данных для получения актуального баланса
+        $user = Auth::user()->fresh();
         
         // Получаем покупки пользователя (по user_id или email)
         $orders = Order::where(function($query) use ($user) {

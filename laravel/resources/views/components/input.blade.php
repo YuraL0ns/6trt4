@@ -6,11 +6,16 @@
     'placeholder' => '',
     'required' => false,
     'error' => '',
+    'id' => null,
 ])
+
+@php
+    $inputId = $id ?? $name;
+@endphp
 
 <div class="mb-4">
     @if($label)
-        <label for="{{ $name }}" class="block text-sm font-medium text-gray-300 mb-2">
+        <label for="{{ $inputId }}" class="block text-sm font-medium text-gray-300 mb-2">
             {{ $label }}
             @if($required)
                 <span class="text-red-500">*</span>
@@ -21,7 +26,7 @@
     <input
         type="{{ $type }}"
         name="{{ $name }}"
-        id="{{ $name }}"
+        id="{{ $inputId }}"
         value="{{ old($name, $value) }}"
         placeholder="{{ $placeholder }}"
         {{ $required ? 'required' : '' }}

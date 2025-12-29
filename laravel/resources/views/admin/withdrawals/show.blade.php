@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@php
+    use Illuminate\Support\Facades\Storage;
+@endphp
+
 @section('title', 'Заявка на вывод - Hunter-Photo.Ru')
 @section('page-title', 'Заявка на вывод средств')
 
@@ -64,6 +68,35 @@
                         <p class="text-sm text-gray-400 mb-1">Баланс после вывода</p>
                         <p class="text-white">{{ number_format($withdrawal->balance_after, 0, ',', ' ') }} ₽</p>
                     </div>
+                    
+                    {{-- Чеки --}}
+                    <div class="pt-4 border-t border-gray-700 space-y-3">
+                        <div>
+                            <p class="text-sm text-gray-400 mb-2">Чеки</p>
+                            <div class="space-y-2">
+                                <div class="flex items-center justify-between p-3 bg-[#121212] rounded-lg">
+                                    <span class="text-sm text-gray-300">Чек администратора (отправка средств):</span>
+                                    @if($withdrawal->receipt_path_admin)
+                                        <a href="{{ route('admin.withdrawals.receipt', ['id' => $withdrawal->id, 'type' => 'admin']) }}" target="_blank" class="text-[#a78bfa] hover:text-[#8b5cf6] text-sm">
+                                            Просмотреть
+                                        </a>
+                                    @else
+                                        <span class="text-sm text-gray-500">Не загружен</span>
+                                    @endif
+                                </div>
+                                <div class="flex items-center justify-between p-3 bg-[#121212] rounded-lg">
+                                    <span class="text-sm text-gray-300">Чек пользователя (получение средств):</span>
+                                    @if($withdrawal->receipt_path_photographer)
+                                        <a href="{{ route('admin.withdrawals.receipt', ['id' => $withdrawal->id, 'type' => 'photographer']) }}" target="_blank" class="text-[#a78bfa] hover:text-[#8b5cf6] text-sm">
+                                            Просмотреть
+                                        </a>
+                                    @else
+                                        <span class="text-sm text-gray-500">Не загружен</span>
+                                    @endif
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </x-card>
             
@@ -72,8 +105,9 @@
                     <form action="{{ route('admin.withdrawals.approve', $withdrawal->id) }}" method="POST" enctype="multipart/form-data" class="space-y-4">
                         @csrf
                         <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Загрузить чек</label>
-                            <input type="file" name="receipt" accept="image/*,application/pdf" class="w-full px-4 py-2 bg-[#121212] border border-gray-700 rounded-lg text-white" required>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Загрузить чек администратора (чек об отправке средств)</label>
+                            <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" class="w-full px-4 py-2 bg-[#121212] border border-gray-700 rounded-lg text-white" required>
+                            <p class="text-xs text-gray-400 mt-1">Форматы: PDF, JPG, PNG. Максимальный размер: 10 МБ</p>
                         </div>
                         <div class="flex space-x-3">
                             <x-button type="submit" class="flex-1">Одобрить и загрузить чек</x-button>

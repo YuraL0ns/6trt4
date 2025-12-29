@@ -75,8 +75,10 @@ services:
         condition: service_healthy
     networks:
       - hunter-photo-network
-    command: >
-      sh -c "
+    command:
+      - sh
+      - -c
+      - |
         # Ждем, пока entrypoint обновит .env файл
         sleep 5 &&
         # Очищаем кеши перед проверкой подключения
@@ -92,11 +94,16 @@ services:
         php artisan config:cache &&
         php artisan route:cache &&
         php artisan view:cache &&
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем правильные права после создания кешей
+        chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache &&
+        find /var/www/html/storage -type d -exec chmod 775 {} \; &&
+        find /var/www/html/storage -type f -exec chmod 664 {} \; &&
+        find /var/www/html/bootstrap/cache -type d -exec chmod 775 {} \; &&
+        find /var/www/html/bootstrap/cache -type f -exec chmod 664 {} \; &&
         # Выполняем миграции только если подключение работает
         (php artisan migrate --force || echo 'WARNING: Migrations failed, but continuing...') &&
         php artisan storage:link &&
         php-fpm
-      "
 
   # Nginx для Laravel
   nginx:

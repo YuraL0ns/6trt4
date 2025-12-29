@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Event;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -22,18 +23,21 @@ class AnalyticsController extends Controller
      */
     public function index(Request $request)
     {
-        $startDate = $request->get('start_date', now()->startOfMonth());
-        $endDate = $request->get('end_date', now()->endOfMonth());
+        $startDate = $request->get('start_date', now()->startOfMonth()->format('Y-m-d'));
+        $endDate = $request->get('end_date', now()->endOfMonth()->format('Y-m-d'));
 
-        $orders = Order::where('status', 'paid')
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->get();
+        // Запрос для статистики (все оплаченные заказы за период)
+        $statsQuery = Order::where('status', 'paid')
+            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
 
-        $totalRevenue = $orders->sum('total_amount');
-        $totalOrders = $orders->count();
-        $totalPhotos = $orders->sum(function ($order) {
-            return $order->items->count();
-        });
+        $totalRevenue = $statsQuery->sum('total_amount');
+        $totalOrders = $statsQuery->count();
+        
+        // Подсчет фотографий
+        $totalPhotos = OrderItem::whereHas('order', function($q) use ($startDate, $endDate) {
+            $q->where('status', 'paid')
+              ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
+        })->count();
 
         // Комиссия платформы (20% по умолчанию, можно получить из настроек)
         $commissionPercent = \App\Models\Setting::get('percent_for_sales', 20);
@@ -42,7 +46,7 @@ class AnalyticsController extends Controller
 
         // Статистика по месяцам
         $monthlyStats = Order::where('status', 'paid')
-            ->whereBetween('created_at', [$startDate, $endDate])
+            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->select(
                 DB::raw("DATE_TRUNC('month', created_at) as month"),
                 DB::raw('COUNT(*) as orders_count'),
@@ -52,6 +56,36 @@ class AnalyticsController extends Controller
             ->orderBy('month', 'asc')
             ->get();
 
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Список продаж с поиском
+        $ordersQuery = Order::where('status', 'paid')
+            ->with(['user', 'items.photo.event'])
+            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
+
+        // Поиск по email
+        if ($request->has('search_email') && $request->search_email) {
+            $ordersQuery->where('email', 'like', '%' . $request->search_email . '%');
+        }
+
+        // Поиск по телефону
+        if ($request->has('search_phone') && $request->search_phone) {
+            $ordersQuery->where('phone', 'like', '%' . $request->search_phone . '%');
+        }
+
+        // Поиск по названию события (через items->photo->event)
+        if ($request->has('search_event') && $request->search_event) {
+            $ordersQuery->whereHas('items.photo.event', function($q) use ($request) {
+                $q->where('title', 'like', '%' . $request->search_event . '%');
+            });
+        }
+
+        // Поиск по дате (уже применяется через whereBetween выше, но можно добавить точную дату)
+        if ($request->has('search_date') && $request->search_date) {
+            $searchDate = $request->search_date;
+            $ordersQuery->whereDate('created_at', $searchDate);
+        }
+
+        $orders = $ordersQuery->orderBy('created_at', 'desc')->paginate(25)->withQueryString();
+
         return view('admin.analytics', compact(
             'totalRevenue',
             'totalOrders',
@@ -60,7 +94,8 @@ class AnalyticsController extends Controller
             'photographersEarnings',
             'monthlyStats',
             'startDate',
-            'endDate'
+            'endDate',
+            'orders'
         ));
     }
 }

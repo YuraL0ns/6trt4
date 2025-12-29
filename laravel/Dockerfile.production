@@ -12,10 +12,12 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libpq-dev \
     libicu-dev \
+    libzip-dev \
     zip \
     unzip \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
-    && docker-php-ext-install pdo_pgsql pgsql mbstring exif pcntl bcmath gd opcache \
+    && docker-php-ext-configure intl \
+    && docker-php-ext-install pdo_pgsql pgsql mbstring exif pcntl bcmath gd opcache zip intl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Установка Node.js и npm для сборки фронтенда
@@ -54,14 +56,18 @@ COPY php.ini /usr/local/etc/php/conf.d/uploads.ini
 
 # Права доступа
 RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html/storage \
-    && chmod -R 755 /var/www/html/bootstrap/cache
+    && mkdir -p /var/www/html/storage/framework/{cache,sessions,views,testing} \
+    && mkdir -p /var/www/html/storage/app/public/{events,orders} \
+    && mkdir -p /var/www/html/storage/logs \
+    && chmod -R 775 /var/www/html/storage \
+    && chmod -R 775 /var/www/html/bootstrap/cache
 
 # Создаем entrypoint скрипт для установки прав при запуске
 # Используем heredoc для избежания проблем с экранированием
 RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/bash
-set -e
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убираем set -e, так как он конфликтует с командами, содержащими &&
+# set -e
 
 # Удаляем папку events перед запуском (если требуется очистка)
 if [ "${CLEAR_EVENTS_ON_START:-false}" = "true" ]; then
@@ -75,16 +81,33 @@ fi
 # Устанавливаем права на директории при запуске контейнера
 if [ -d "/var/www/html/storage" ]; then
     chown -R www-data:www-data /var/www/html/storage
-    find /var/www/html/storage -type d -exec chmod 755 {} \;
-    find /var/www/html/storage -type f -exec chmod 644 {} \;
-    # Создаем директории для событий если их нет
+    
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем правильные права для разных типов директорий
+    # Директории должны быть 775 (rwxrwxr-x) для возможности записи
+    find /var/www/html/storage -type d -exec chmod 775 {} \;
+    
+    # Файлы должны быть 664 (rw-rw-r--) для возможности записи
+    find /var/www/html/storage -type f -exec chmod 664 {} \;
+    
+    # Создаем все необходимые поддиректории Laravel
     mkdir -p /var/www/html/storage/app/public/events
-    chmod -R 755 /var/www/html/storage/app/public/events
+    mkdir -p /var/www/html/storage/app/public/orders
+    mkdir -p /var/www/html/storage/framework/cache
+    mkdir -p /var/www/html/storage/framework/sessions
+    mkdir -p /var/www/html/storage/framework/views
+    mkdir -p /var/www/html/storage/framework/testing
+    mkdir -p /var/www/html/storage/logs
+    
+    # Устанавливаем права на созданные директории
+    chown -R www-data:www-data /var/www/html/storage
+    find /var/www/html/storage -type d -exec chmod 775 {} \;
+    find /var/www/html/storage -type f -exec chmod 664 {} \;
 fi
 
 if [ -d "/var/www/html/bootstrap/cache" ]; then
     chown -R www-data:www-data /var/www/html/bootstrap/cache
-    chmod -R 755 /var/www/html/bootstrap/cache
+    find /var/www/html/bootstrap/cache -type d -exec chmod 775 {} \;
+    find /var/www/html/bootstrap/cache -type f -exec chmod 664 {} \;
 fi
 
 # Генерируем APP_KEY если его нет в .env
@@ -163,8 +186,40 @@ if [ -f "/var/www/html/.env" ]; then
     fi
 fi
 
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Исправляем права после запуска (на случай если команды создали файлы от root)
+# Это выполнится после того, как основная команда запустится
+if [ "$1" = "php-fpm" ] || [ "$1" = "sh" ]; then
+    # Запускаем в фоне задачу для периодического исправления прав
+    (
+        sleep 10
+        chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+        find /var/www/html/storage -type d -exec chmod 775 {} \; 2>/dev/null || true
+        find /var/www/html/storage -type f -exec chmod 664 {} \; 2>/dev/null || true
+        find /var/www/html/bootstrap/cache -type d -exec chmod 775 {} \; 2>/dev/null || true
+        find /var/www/html/bootstrap/cache -type f -exec chmod 664 {} \; 2>/dev/null || true
+    ) &
+fi
+
 # Запускаем основную команду
-exec "$@"
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Если первый аргумент - sh и второй - -c, выполняем всю команду через sh -c
+# Это нужно для правильной обработки команд с && из docker-compose
+# Когда docker-compose передает `sh -c "команда"`, это становится: $1=sh, $2=-c, $3="команда"
+# Проблема: многострочная команда может разбиваться на несколько аргументов
+# Решение: просто передаем все аргументы после "sh -c" напрямую в sh -c
+if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+    # Сдвигаем первые два аргумента (sh и -c)
+    shift 2
+    # Объединяем все оставшиеся аргументы в одну строку
+    # Используем "$*" который объединяет аргументы с пробелами
+    # Это правильно обработает многострочную команду из docker-compose
+    exec sh -c "$*"
+elif [ "$#" -gt 0 ]; then
+    # Обычное выполнение команды
+    exec "$@"
+else
+    # Если нет аргументов, запускаем php-fpm по умолчанию
+    exec php-fpm
+fi
 EOF
 
 RUN chmod +x /entrypoint.sh

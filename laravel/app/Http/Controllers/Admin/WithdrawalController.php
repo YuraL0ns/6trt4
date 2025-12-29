@@ -29,6 +29,42 @@ class WithdrawalController extends Controller
     }
 
     /**
+     * Показать чек (для администратора)
+     */
+    public function showReceipt(string $id, string $type)
+    {
+        $withdrawal = Withdrawal::findOrFail($id);
+        
+        // Определяем путь к чеку
+        $receiptPath = null;
+        if ($type === 'admin') {
+            $receiptPath = $withdrawal->receipt_path_admin;
+        } elseif ($type === 'photographer') {
+            $receiptPath = $withdrawal->receipt_path_photographer;
+        } else {
+            abort(404);
+        }
+        
+        if (!$receiptPath) {
+            abort(404, 'Чек не найден');
+        }
+        
+        $fullPath = storage_path('app/public/' . $receiptPath);
+        
+        if (!file_exists($fullPath)) {
+            abort(404, 'Файл не найден');
+        }
+        
+        $mimeType = mime_content_type($fullPath);
+        $headers = [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . basename($receiptPath) . '"',
+        ];
+        
+        return response()->file($fullPath, $headers);
+    }
+
+    /**
      * Показать заявку на вывод
      */
     public function show(string $id)
@@ -60,8 +96,9 @@ class WithdrawalController extends Controller
             'receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:10240',
         ]);
 
-        // Сохраняем чек администратора
-        $receiptPath = $request->file('receipt')->store('withdrawals/receipts', 'public');
+        // Сохраняем чек администратора в папку storage/public/withdrawals/{userId}
+        $userId = $withdrawal->photographer_id;
+        $receiptPath = $request->file('receipt')->store("withdrawals/{$userId}", 'public');
 
         // Получаем процент налога с вывода
         $taxPercent = \App\Models\Setting::get('percent_for_salary', 6);

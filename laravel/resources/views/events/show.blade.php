@@ -169,7 +169,15 @@
             </div>
         </x-card>
     @endif
-
+ <!-- Блок результатов поиска (создается динамически) -->
+ <div id="search-results-section" class="hidden mb-6">
+        <x-card>
+            <h2 class="text-2xl font-bold text-white mb-4">Результаты поиска</h2>
+            <div id="search-results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                <!-- Результаты будут добавлены динамически -->
+            </div>
+        </x-card>
+    </div>
     <!-- Галерея фотографий -->
     <div>
         <h2 class="text-2xl font-bold text-white mb-4">Фотографии</h2>
@@ -235,7 +243,7 @@
             </div>
 
             <div class="mt-6">
-                {{ $photos->links() }}
+                {{ $photos->links('vendor.pagination.default') }}
             </div>
         @else
             <x-empty-state 
@@ -245,18 +253,10 @@
         @endif
     </div>
 
-    <!-- Блок результатов поиска (создается динамически) -->
-    <div id="search-results-section" class="hidden mb-6">
-        <x-card>
-            <h2 class="text-2xl font-bold text-white mb-4">Результаты поиска</h2>
-            <div id="search-results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-                <!-- Результаты будут добавлены динамически -->
-            </div>
-        </x-card>
-    </div>
+   
 
     <!-- Модальное окно просмотра фотографии -->
-    <x-modal id="photo-modal" title="Просмотр фотографии" size="lg">
+    <x-modal id="photo-modal" title="Просмотр фотографии" size="xl">
         <div class="relative">
             <!-- Кнопка "Назад" -->
             <button id="prev-photo-btn" onclick="navigatePhoto(-1)" class="hidden absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-all">
@@ -364,11 +364,23 @@ function loadPhoto(photoId) {
                     </div>
                     ${cartButton}
                 </div>
-                <div class="flex space-x-2">
+                <div class="flex space-x-2 mb-6">
                     ${data.has_faces ? '<button onclick="findSimilar(\'' + photoId + '\', \'face\')" class="px-4 py-2 border border-gray-700 hover:bg-gray-800 text-white font-semibold rounded-lg transition-colors">Показать похожие (по лицам)</button>' : ''}
                     ${data.numbers ? '<button onclick="findSimilar(\'' + photoId + '\', \'number\')" class="px-4 py-2 border border-gray-700 hover:bg-gray-800 text-white font-semibold rounded-lg transition-colors">Показать похожие (по номерам)</button>' : ''}
                 </div>
+                <!-- Блок "Схожие фото" -->
+                <div id="modal-similar-photos" class="mt-6 border-t border-gray-700 pt-6">
+                    <h3 class="text-lg font-semibold text-white mb-4">Схожие фото</h3>
+                    <div id="modal-similar-photos-grid" class="grid grid-cols-5 gap-3">
+                        <div class="col-span-5 text-center py-4 text-gray-400">
+                            Загрузка похожих фотографий...
+                        </div>
+                    </div>
+                </div>
             `;
+            
+            // Загружаем похожие фотографии при открытии модального окна
+            loadSimilarPhotosInModal(photoId, data);
             
             // Показываем/скрываем кнопки навигации
             const prevBtn = document.getElementById('prev-photo-btn');
@@ -489,6 +501,187 @@ function addToCart(photoId) {
     });
 }
 
+// Загрузка похожих фотографий в модальном окне
+async function loadSimilarPhotosInModal(photoId, photoData) {
+    const similarGrid = document.getElementById('modal-similar-photos-grid');
+    if (!similarGrid) return;
+    
+    // Проверяем, есть ли данные для поиска
+    const hasFaces = photoData.has_faces || false;
+    const hasNumbers = photoData.numbers && photoData.numbers.length > 0;
+    
+    if (!hasFaces && !hasNumbers) {
+        similarGrid.innerHTML = '<div class="col-span-5 text-center py-4 text-gray-400">Нет данных для поиска похожих фотографий</div>';
+        return;
+    }
+    
+    try {
+        // Используем proxy_url для избежания CORS
+        const photoUrl = photoData.proxy_url || photoData.url || photoData.fallback_url;
+        if (!photoUrl) {
+            similarGrid.innerHTML = '<div class="col-span-5 text-center py-4 text-gray-400">Не удалось получить URL фотографии</div>';
+            return;
+        }
+        
+        // Загружаем изображение через прокси
+        const imageResponse = await fetch(photoUrl);
+        if (!imageResponse.ok) {
+            throw new Error('Не удалось загрузить изображение');
+        }
+        const imageBlob = await imageResponse.blob();
+        
+        // Определяем расширение файла на основе MIME-типа
+        const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+        let fileExtension = 'jpg';
+        if (contentType.includes('png')) {
+            fileExtension = 'png';
+        } else if (contentType.includes('webp')) {
+            fileExtension = 'webp';
+        }
+        
+        // Создаем File объект из Blob с правильным MIME-типом
+        const imageFile = new File([imageBlob], `photo_${photoId}.${fileExtension}`, {
+            type: contentType
+        });
+        
+        // Создаем FormData
+        const formData = new FormData();
+        formData.append('photo', imageFile);
+        
+        // Пробуем сначала поиск по лицам, если есть, иначе по номерам
+        const searchType = hasFaces ? 'face' : 'number';
+        formData.append('type', searchType);
+        formData.append('_token', document.querySelector('input[name="_token"]').value);
+        
+        const eventSlug = '{{ $event->slug ?? $event->id }}';
+        const searchResponse = await fetch(`{{ route("events.find-similar", $event->slug ?? $event->id) }}`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        
+        if (!searchResponse.ok) {
+            // Пытаемся получить детали ошибки
+            let errorMessage = 'Ошибка при выполнении поиска';
+            try {
+                const errorData = await searchResponse.json();
+                errorMessage = errorData.message || errorData.error || errorMessage;
+                if (errorData.errors) {
+                    // Если есть ошибки валидации, показываем их
+                    const validationErrors = Object.values(errorData.errors).flat().join(', ');
+                    errorMessage = validationErrors || errorMessage;
+                }
+                console.error('Ошибка поиска в модальном окне:', errorData);
+            } catch (e) {
+                console.error('Не удалось прочитать ответ об ошибке:', e);
+            }
+            throw new Error(errorMessage);
+        }
+        
+        const searchData = await searchResponse.json();
+        
+        let results = [];
+        if (searchData.status === 'processing' && searchData.task_id) {
+            // Если задача асинхронная, опрашиваем статус
+            const pollResult = await pollSearchTaskForModal(searchData.task_id);
+            results = pollResult?.results || [];
+        } else if (searchData.status === 'completed') {
+            results = searchData.results || [];
+        }
+        
+        // Фильтруем результаты: исключаем фотографии из корзины и ограничиваем до 10
+        const cartPhotoIds = photoData.cart_photo_ids || [];
+        const filteredResults = results
+            .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)))
+            .slice(0, 10);
+        
+        // Отображаем результаты в модальном окне
+        displaySimilarPhotosInModal(filteredResults, similarGrid);
+        
+    } catch (error) {
+        console.error('Ошибка загрузки похожих фотографий:', error);
+        similarGrid.innerHTML = '<div class="col-span-5 text-center py-4 text-gray-400">Не удалось загрузить похожие фотографии</div>';
+    }
+}
+
+// Отображение похожих фотографий в модальном окне
+async function displaySimilarPhotosInModal(results, gridElement) {
+    if (!results || results.length === 0) {
+        gridElement.innerHTML = '<div class="col-span-5 text-center py-4 text-gray-400">Похожие фотографии не найдены</div>';
+        return;
+    }
+    
+    gridElement.innerHTML = '';
+    const eventSlug = '{{ $event->slug ?? $event->id }}';
+    
+    // Загружаем данные для каждой фотографии
+    const photoPromises = results.map(async (photoData) => {
+        try {
+            const response = await fetch(`/events/${eventSlug}/photo/${photoData.photo_id || photoData.id}`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            if (!response.ok) return null;
+            
+            const photoInfo = await response.json();
+            return {
+                ...photoInfo,
+                similarity: photoData.similarity || (1 - (photoData.distance || 0))
+            };
+        } catch (error) {
+            console.error(`Error loading photo ${photoData.photo_id}:`, error);
+            return null;
+        }
+    });
+    
+    const loadedPhotos = await Promise.all(photoPromises);
+    // Фильтруем фотографии из корзины
+    const validPhotos = loadedPhotos
+        .filter(p => p !== null && !p.in_cart);
+    
+    if (validPhotos.length === 0) {
+        gridElement.innerHTML = '<div class="col-span-5 text-center py-4 text-gray-400">Не удалось загрузить фотографии или все фотографии уже в корзине</div>';
+        return;
+    }
+    
+    // Создаем элементы для каждой фотографии (максимум 10)
+    validPhotos.slice(0, 10).forEach((photo) => {
+        const photoElement = document.createElement('div');
+        photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
+        photoElement.onclick = () => {
+            // Закрываем текущее модальное окно и открываем новое
+            document.getElementById('photo-modal').classList.add('hidden');
+            openPhotoModal(photo.id);
+        };
+        
+        const similarityPercent = Math.round(photo.similarity * 100);
+        const similarityColor = similarityPercent >= 80 ? 'bg-green-500' : (similarityPercent >= 60 ? 'bg-yellow-500' : 'bg-orange-500');
+        
+        photoElement.innerHTML = `
+            <img 
+                src="${photo.url || photo.fallback_url || ''}" 
+                alt="Photo" 
+                class="w-full h-full object-cover group-hover:opacity-75 transition-opacity"
+                onerror="this.onerror=null; ${photo.fallback_url && photo.fallback_url !== photo.url ? `this.src='${photo.fallback_url}';` : "this.style.display='none'; this.nextElementSibling.style.display='flex';"}"
+            >
+            <div class="w-full h-full flex items-center justify-center text-gray-500 text-xs" style="display: none;">
+                <p>Изображение не загружено</p>
+            </div>
+            <div class="absolute top-2 left-2 ${similarityColor} text-white px-2 py-1 rounded text-xs font-semibold">
+                ${similarityPercent}%
+            </div>
+            ${photo.in_cart ? '<div class="absolute top-2 right-2 bg-[#a78bfa] text-white px-2 py-1 rounded text-xs">В корзине</div>' : ''}
+        `;
+        
+        gridElement.appendChild(photoElement);
+    });
+}
+
 // Поиск похожих фотографий по существующей фотографии
 async function findSimilar(photoId, type) {
     console.log(`findSimilar called: photoId=${photoId}, type=${type}`);
@@ -532,19 +725,37 @@ async function findSimilar(photoId, type) {
         }
         
         const photoData = await photoResponse.json();
-        const photoUrl = photoData.url || photoData.fallback_url;
+        // Используем proxy_url для избежания проблем с CORS
+        const photoUrl = photoData.proxy_url || photoData.url || photoData.fallback_url;
         
         if (!photoUrl) {
             throw new Error('Не удалось получить URL фотографии');
         }
         
-        // Загружаем изображение как Blob
+        // Загружаем изображение как Blob через прокси (избегаем CORS)
         const imageResponse = await fetch(photoUrl);
+        if (!imageResponse.ok) {
+            throw new Error('Не удалось загрузить изображение');
+        }
         const imageBlob = await imageResponse.blob();
+        
+        // Определяем расширение файла на основе MIME-типа
+        const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+        let fileExtension = 'jpg';
+        if (contentType.includes('png')) {
+            fileExtension = 'png';
+        } else if (contentType.includes('webp')) {
+            fileExtension = 'webp';
+        }
+        
+        // Создаем File объект из Blob с правильным MIME-типом
+        const imageFile = new File([imageBlob], `photo_${photoId}.${fileExtension}`, {
+            type: contentType
+        });
         
         // Создаем FormData для отправки
         const formData = new FormData();
-        formData.append('photo', imageBlob, `photo_${photoId}.jpg`);
+        formData.append('photo', imageFile);
         formData.append('type', type);
         formData.append('_token', document.querySelector('input[name="_token"]').value);
         
@@ -572,16 +783,19 @@ async function findSimilar(photoId, type) {
             progressBar.style.width = '50%';
         }
         
+        let finalResults = [];
         if (searchData.status === 'processing' && searchData.task_id) {
             // Задача запущена асинхронно, нужно опрашивать статус
             if (messageDiv) {
                 messageDiv.textContent = 'Поиск выполняется, пожалуйста подождите...';
             }
             
-            await pollSearchTask(searchData.task_id);
+            const pollResult = await pollSearchTask(searchData.task_id);
+            finalResults = pollResult?.results || [];
         } else if (searchData.status === 'completed') {
             // Результаты готовы сразу
-            await showSearchResults(searchData.results || [], searchData.total || 0);
+            finalResults = searchData.results || [];
+            await showSearchResults(finalResults, searchData.total || 0);
         } else {
             throw new Error('Неизвестный статус ответа');
         }
@@ -686,7 +900,53 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Опрос статуса асинхронной задачи
+// Опрос статуса асинхронной задачи (для использования в loadSimilarPhotosInModal)
+async function pollSearchTaskForModal(taskId) {
+    const maxAttempts = 60;
+    let attempts = 0;
+    
+    const poll = async () => {
+        try {
+            const response = await fetch(`/api/search-task/${taskId}/status`);
+            const data = await response.json();
+            
+            if (data.status === 'completed') {
+                let results = [];
+                let total = 0;
+                
+                if (data.results && Array.isArray(data.results)) {
+                    results = data.results;
+                    total = data.total || data.results.length;
+                } else if (data.result && data.result.results && Array.isArray(data.result.results)) {
+                    results = data.result.results;
+                    total = data.result.total_found || data.result.total || data.result.results.length;
+                } else if (data.result && Array.isArray(data.result)) {
+                    results = data.result;
+                    total = data.total || data.result.length;
+                }
+                
+                return { results, total };
+            } else if (data.status === 'failed') {
+                throw new Error(data.error || 'Задача завершилась с ошибкой');
+            } else {
+                attempts++;
+                if (attempts < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    return poll();
+                } else {
+                    throw new Error('Превышено время ожидания задачи');
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка при опросе задачи:', error);
+            throw error;
+        }
+    };
+    
+    return poll();
+}
+
+// Опрос статуса асинхронной задачи (для основного поиска)
 async function pollSearchTask(taskId) {
     const messageDiv = document.getElementById('face-search-message');
     const progressBar = document.getElementById('face-search-progress-bar');
@@ -734,7 +994,7 @@ async function pollSearchTask(taskId) {
                 
                 console.log('Final results:', results, 'total:', total);
                 await showSearchResults(results, total);
-                return;
+                return { results, total }; // Возвращаем результаты для использования в loadSimilarPhotosInModal
             } else if (data.status === 'failed') {
                 throw new Error(data.error || 'Задача завершилась с ошибкой');
             } else {
@@ -788,12 +1048,40 @@ async function showSearchResults(results, total) {
         return;
     }
     
-    messageDiv.textContent = `Найдено похожих фотографий: ${total}`;
+    // Получаем список фотографий в корзине (из первого результата или запрашиваем отдельно)
+    let cartPhotoIds = [];
+    try {
+        const eventSlug = '{{ $event->slug ?? $event->id }}';
+        const firstPhotoId = results[0]?.photo_id || results[0]?.id;
+        if (firstPhotoId) {
+            const photoResponse = await fetch(`/events/${eventSlug}/photo/${firstPhotoId}`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            if (photoResponse.ok) {
+                const photoData = await photoResponse.json();
+                cartPhotoIds = photoData.cart_photo_ids || [];
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching cart photo IDs:', error);
+    }
+    
+    // Фильтруем результаты: исключаем фотографии из корзины и ограничиваем до 10
+    const filteredResults = results
+        .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)))
+        .slice(0, 10);
+    
+    const filteredTotal = filteredResults.length;
+    
+    messageDiv.textContent = `Найдено похожих фотографий: ${filteredTotal}${filteredTotal < total ? ` (из ${total}, исключены фотографии из корзины)` : ''}`;
     messageDiv.classList.remove('text-red-400', 'text-yellow-400');
     messageDiv.classList.add('text-green-400');
     
-    // Получаем ID найденных фотографий (сортируем по similarity/distance)
-    const foundPhotos = results.map(r => ({
+    // Получаем ID найденных фотографий (сортируем по similarity/distance) из отфильтрованных результатов
+    const foundPhotos = filteredResults.map(r => ({
         id: String(r.photo_id || r.id || ''),
         distance: r.distance || 0,
         similarity: r.similarity || (1 - (r.distance || 0))
@@ -861,20 +1149,22 @@ async function showSearchResults(results, total) {
         
         // Ждем загрузки всех фотографий
         const loadedPhotos = await Promise.all(photoPromises);
-        const validPhotos = loadedPhotos.filter(p => p !== null);
+        // Фильтруем фотографии из корзины
+        const validPhotos = loadedPhotos
+            .filter(p => p !== null && !p.in_cart);
         
-        console.log(`Loaded ${validPhotos.length} photos out of ${foundPhotos.length}`);
+        console.log(`Loaded ${validPhotos.length} photos out of ${foundPhotos.length} (excluding ${loadedPhotos.filter(p => p && p.in_cart).length} in cart)`);
         
         // Очищаем grid и добавляем фотографии
         searchResultsGrid.innerHTML = '';
         
         if (validPhotos.length === 0) {
-            searchResultsGrid.innerHTML = '<div class="col-span-full text-center py-8 text-gray-400">Не удалось загрузить фотографии</div>';
+            searchResultsGrid.innerHTML = '<div class="col-span-full text-center py-8 text-gray-400">Не удалось загрузить фотографии или все фотографии уже в корзине</div>';
             return;
         }
         
-        // Создаем элементы для каждой фотографии
-        validPhotos.forEach((photo, index) => {
+        // Создаем элементы для каждой фотографии (максимум 10)
+        validPhotos.slice(0, 10).forEach((photo, index) => {
             const photoElement = document.createElement('div');
             photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
             photoElement.onclick = () => openPhotoModal(photo.id);

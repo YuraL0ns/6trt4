@@ -72,7 +72,7 @@
         </div>
 
         <div class="mt-6">
-            {{ $events->links() }}
+            {{ $events->links('vendor.pagination.default') }}
         </div>
     @else
         <x-empty-state 

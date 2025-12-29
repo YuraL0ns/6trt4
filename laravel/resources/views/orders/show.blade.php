@@ -48,15 +48,36 @@
             </p>
         @endif
         
-        @if($order->status === 'paid' && $order->zip_path)
-            <div class="mt-6">
-                <x-button href="{{ Storage::url($order->zip_path) }}" size="lg" class="w-full">
-                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                    </svg>
-                    Скачать архив с фотографиями
-                </x-button>
-            </div>
+        @if($order->status === 'paid')
+            @php
+                $zipPath = $order->zip_path;
+                $zipExists = false;
+                if ($zipPath) {
+                    $fullZipPath = storage_path('app/public/' . $zipPath);
+                    $zipExists = file_exists($fullZipPath);
+                }
+            @endphp
+            
+            @if($zipPath && $zipExists)
+                <div class="mt-6">
+                    <x-button href="{{ route('orders.download', $order->id) }}" size="lg" class="w-full">
+                        <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                        </svg>
+                        Скачать архив с фотографиями
+                    </x-button>
+                </div>
+            @else
+                <div class="mt-6 p-4 bg-yellow-900/20 border border-yellow-700 rounded-lg">
+                    <p class="text-yellow-400 text-sm">
+                        @if(!$zipPath)
+                            Архив создается, пожалуйста, обновите страницу через несколько секунд.
+                        @else
+                            Архив не найден. Пожалуйста, обратитесь в поддержку.
+                        @endif
+                    </p>
+                </div>
+            @endif
         @endif
     </x-card>
 @endsection

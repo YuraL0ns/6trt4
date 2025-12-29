@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Event;
 use App\Models\Photo;
 use App\Models\Cart;
+use App\Models\FaceSearch;
 use App\Services\PhotoProcessingService;
 use App\Http\Client\FastApiClient;
 use Illuminate\Http\Request;
@@ -149,15 +150,62 @@ class EventController extends Controller
             ->where('id', $photoId)
             ->firstOrFail();
 
+        // Получаем список ID фотографий в корзине для фильтрации
+        $cartPhotoIds = $this->getCartPhotoIds();
+
         return response()->json([
             'id' => $photo->id,
             'url' => $photo->getDisplayUrl(),
             'fallback_url' => $photo->getFallbackUrl(),
+            'proxy_url' => route('events.photo.proxy', ['slug' => $slug, 'photoId' => $photoId]), // URL для прокси через Laravel
             'price' => number_format($photo->getPriceWithCommission(), 0, ',', ' '),
             'has_faces' => $photo->has_faces ?? false,
             'numbers' => $photo->numbers ?? [],
             'in_cart' => $this->isPhotoInCart($photo->id),
+            'cart_photo_ids' => $cartPhotoIds, // Список ID фотографий в корзине
         ]);
+    }
+
+    /**
+     * Прокси для получения изображения (решает проблему CORS)
+     */
+    public function getPhotoProxy(string $slug, string $photoId)
+    {
+        $event = Event::where('status', 'published')
+            ->where('slug', $slug)
+            ->firstOrFail();
+
+        $photo = Photo::where('event_id', $event->id)
+            ->where('id', $photoId)
+            ->firstOrFail();
+
+        $url = $photo->getDisplayUrl();
+        
+        // Если URL внешний (S3), загружаем через Laravel
+        if (strpos($url, 'http') === 0) {
+            try {
+                $imageContent = file_get_contents($url);
+                $mimeType = getimagesizefromstring($imageContent)['mime'] ?? 'image/jpeg';
+                
+                return response($imageContent, 200)
+                    ->header('Content-Type', $mimeType)
+                    ->header('Cache-Control', 'public, max-age=3600');
+            } catch (\Exception $e) {
+                \Log::error("EventController::getPhotoProxy: Failed to fetch image", [
+                    'photo_id' => $photoId,
+                    'url' => $url,
+                    'error' => $e->getMessage()
+                ]);
+                abort(404);
+            }
+        } else {
+            // Локальный файл
+            $filePath = storage_path('app/public/' . ltrim($url, '/'));
+            if (file_exists($filePath)) {
+                return response()->file($filePath);
+            }
+            abort(404);
+        }
     }
 
     /**
@@ -170,8 +218,15 @@ class EventController extends Controller
             ->firstOrFail();
 
         $request->validate([
-            'photo' => 'required|image|mimes:jpeg,png,jpg|max:10240',
+            'photo' => 'required|image|mimes:jpeg,png,jpg,webp|max:10240',
             'type' => 'required|in:face,number',
+        ], [
+            'photo.required' => 'Фотография обязательна для загрузки',
+            'photo.image' => 'Файл должен быть изображением',
+            'photo.mimes' => 'Файл должен быть в формате JPEG, PNG, JPG или WebP',
+            'photo.max' => 'Размер файла не должен превышать 10 МБ',
+            'type.required' => 'Тип поиска обязателен',
+            'type.in' => 'Тип поиска должен быть face или number',
         ]);
 
         try {
@@ -191,15 +246,25 @@ class EventController extends Controller
                 );
             }
 
-            // Удаляем временный файл
-            Storage::disk('public')->delete($imagePath);
-
-            // Если задача запущена, возвращаем task_id
+            // Если задача запущена, сохраняем путь к фото в сессии для последующего сохранения результатов
             if (isset($result['task_id'])) {
+                // Сохраняем путь к загруженному фото в сессии
+                session()->put("search_photo_{$result['task_id']}", $imagePath);
+                
                 return response()->json([
                     'task_id' => $result['task_id'],
                     'status' => 'processing'
                 ]);
+            }
+
+            // Если результат готов сразу, сохраняем результаты
+            if (isset($result['results']) && $request->type === 'face') {
+                $this->saveFaceSearchResults($result['results'], $imagePath);
+            }
+
+            // Удаляем временный файл только если результат готов сразу
+            if (!isset($result['task_id'])) {
+                Storage::disk('public')->delete($imagePath);
             }
 
             // Если результат готов
@@ -241,6 +306,17 @@ class EventController extends Controller
                     $response['results'] = $result['results'] ?? [];
                     $response['total'] = $result['total_found'] ?? count($response['results']);
                     $response['result'] = $result; // Оставляем для обратной совместимости
+                    
+                    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем результаты поиска в FaceSearch
+                    // Получаем путь к загруженному фото из сессии
+                    $userPhotoPath = session()->get("search_photo_{$taskId}");
+                    if ($userPhotoPath) {
+                        $this->saveFaceSearchResults($response['results'], $userPhotoPath);
+                        // Удаляем из сессии после использования
+                        session()->forget("search_photo_{$taskId}");
+                        // Удаляем временный файл
+                        Storage::disk('public')->delete($userPhotoPath);
+                    }
                 } else {
                     $response['results'] = [];
                     $response['total'] = 0;
@@ -278,5 +354,58 @@ class EventController extends Controller
                 }
             })
             ->exists();
+    }
+
+    /**
+     * Получить список ID фотографий в корзине
+     */
+    protected function getCartPhotoIds(): array
+    {
+        $query = Cart::query();
+        
+        if (Auth::check()) {
+            $query->where('user_id', Auth::id());
+        } else {
+            $query->where('session_id', session()->getId());
+        }
+        
+        return $query->pluck('photo_id')->toArray();
+    }
+
+    /**
+     * Сохранить результаты поиска лиц в базу данных
+     */
+    private function saveFaceSearchResults(array $results, ?string $userPhotoPath = null): void
+    {
+        try {
+            foreach ($results as $result) {
+                if (!isset($result['photo_id']) || !isset($result['similarity'])) {
+                    continue;
+                }
+
+                // Преобразуем similarity (0-1) в проценты (0-100)
+                $similarityScore = floatval($result['similarity']) * 100;
+
+                // Нормализуем путь к фото пользователя
+                $normalizedPath = null;
+                if ($userPhotoPath) {
+                    // Убираем префикс storage/app/public/ если есть
+                    $normalizedPath = str_replace('storage/app/public/', '', $userPhotoPath);
+                    $normalizedPath = str_replace('temp/', '', $normalizedPath);
+                }
+
+                FaceSearch::create([
+                    'photo_id' => $result['photo_id'],
+                    'user_uploaded_photo_path' => $normalizedPath,
+                    'similarity_score' => $similarityScore,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error("Error saving face search results", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            // Не прерываем выполнение, просто логируем ошибку
+        }
     }
 }

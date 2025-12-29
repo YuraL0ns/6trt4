@@ -36,6 +36,7 @@ Route::get('/', function () {
 Route::get('/events', [EventController::class, 'index'])->name('events.index');
 Route::get('/events/{slug}', [EventController::class, 'show'])->name('events.show');
 Route::get('/events/{slug}/photo/{photoId}', [EventController::class, 'getPhoto'])->name('events.photo');
+Route::get('/events/{slug}/photo/{photoId}/proxy', [EventController::class, 'getPhotoProxy'])->name('events.photo.proxy');
 Route::post('/events/{slug}/find-similar', [EventController::class, 'findSimilar'])->name('events.find-similar');
 Route::get('/api/search-task/{taskId}/status', [EventController::class, 'getSearchTaskStatus'])->name('api.search-task.status');
 
@@ -60,6 +61,9 @@ Route::get('/payment/status/{paymentId}', [App\Http\Controllers\PaymentControlle
 
 // Поиск заказов (доступен всем)
 Route::get('/orders/search', [OrderController::class, 'search'])->name('orders.search');
+
+// Скачивание архива заказа (доступно всем, но с проверкой доступа в контроллере)
+Route::get('/orders/{id}/download', [OrderController::class, 'download'])->name('orders.download');
 
 // Аутентификация
 Auth::routes();
@@ -109,7 +113,10 @@ Route::middleware(['auth', 'group:photo'])->prefix('photo')->name('photo.')->gro
     Route::get('/messages/{userId}', [App\Http\Controllers\Photo\MessageController::class, 'show'])->name('messages.show');
     Route::post('/messages/{userId}', [App\Http\Controllers\Photo\MessageController::class, 'store'])->name('messages.store');
     Route::get('/withdrawals', [App\Http\Controllers\Photo\WithdrawalController::class, 'index'])->name('withdrawals.index');
+    Route::get('/withdrawals/balance', [App\Http\Controllers\Photo\WithdrawalController::class, 'getBalance'])->name('withdrawals.balance');
     Route::post('/withdrawals', [App\Http\Controllers\Photo\WithdrawalController::class, 'store'])->name('withdrawals.store');
+    Route::post('/withdrawals/{id}/upload-receipt', [App\Http\Controllers\Photo\WithdrawalController::class, 'uploadReceipt'])->name('withdrawals.upload-receipt');
+    Route::get('/withdrawals/{id}/receipt/{type}', [App\Http\Controllers\Photo\WithdrawalController::class, 'showReceipt'])->name('withdrawals.receipt');
 });
 
 // Маршруты для администраторов (включая создание событий)
@@ -159,6 +166,7 @@ Route::middleware(['auth', 'group:admin'])->prefix('admin')->name('admin.')->gro
     Route::get('/photos/{photoId}/faces', [App\Http\Controllers\Admin\PhotoController::class, 'showWithFaces'])->name('photos.show-with-faces');
     Route::get('/withdrawals', [App\Http\Controllers\Admin\WithdrawalController::class, 'index'])->name('withdrawals.index');
     Route::get('/withdrawals/{id}', [App\Http\Controllers\Admin\WithdrawalController::class, 'show'])->name('withdrawals.show');
+    Route::get('/withdrawals/{id}/receipt/{type}', [App\Http\Controllers\Admin\WithdrawalController::class, 'showReceipt'])->name('withdrawals.receipt');
     Route::post('/withdrawals/{id}/approve', [App\Http\Controllers\Admin\WithdrawalController::class, 'approve'])->name('withdrawals.approve');
     Route::post('/withdrawals/{id}/reject', [App\Http\Controllers\Admin\WithdrawalController::class, 'reject'])->name('withdrawals.reject');
     Route::get('/group-requests', [App\Http\Controllers\Admin\GroupRequestController::class, 'index'])->name('group-requests.index');

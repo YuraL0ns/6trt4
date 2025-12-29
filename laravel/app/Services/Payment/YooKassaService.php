@@ -379,8 +379,15 @@ class YooKassaService
             // Автор события (фотограф или администратор) получает базовую цену
             $authorEarning = $basePrice;
 
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем автора из базы данных перед зачислением средств
+            $author = $author->fresh();
+            
             // Зачисляем средства автору события (фотографу или администратору)
             $author->increment('balance', $authorEarning);
+            
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Перезагружаем автора после зачисления для получения актуального баланса
+            $author->refresh();
+            $newBalance = $author->balance;
 
             Log::info("Funds distributed", [
                 'order_id' => $order->id,
@@ -391,6 +398,8 @@ class YooKassaService
                 'base_price' => $basePrice,
                 'commission' => $commission,
                 'author_earning' => $authorEarning,
+                'balance_before' => $newBalance - $authorEarning,
+                'balance_after' => $newBalance,
             ]);
         }
     }
@@ -399,7 +408,7 @@ class YooKassaService
      * Генерация ZIP архива с купленными фотографиями
      * ВАЖНО: Используются файлы из original_photo (без водяного знака), а не custom_photo
      */
-    protected function generateZipArchive(Order $order): void
+    public function generateZipArchive(Order $order): void
     {
         try {
             $zipPath = storage_path('app/public/orders/' . $order->id . '.zip');
@@ -410,18 +419,39 @@ class YooKassaService
             }
 
             $zip = new \ZipArchive();
-            if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== TRUE) {
-                throw new Exception("Cannot create ZIP archive");
+            $zipOpenResult = $zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+            if ($zipOpenResult !== TRUE) {
+                $errorMsg = "Cannot create ZIP archive. Error code: {$zipOpenResult}";
+                Log::error("ZIP archive creation failed", [
+                    'order_id' => $order->id,
+                    'zip_path' => $zipPath,
+                    'error_code' => $zipOpenResult
+                ]);
+                throw new Exception($errorMsg);
             }
 
             $tempFiles = []; // Для временных файлов с S3
+            $addedFilesCount = 0;
+            $failedFilesCount = 0;
 
             foreach ($order->items as $item) {
                 $photo = $item->photo;
                 
+                if (!$photo) {
+                    Log::warning("Photo not found for order item", [
+                        'order_id' => $order->id,
+                        'item_id' => $item->id
+                    ]);
+                    $failedFilesCount++;
+                    continue;
+                }
+                
                 // ВАЖНО: Используем оригинальный файл (original_photo), а не custom_photo
                 $filePath = null;
                 $fileName = $photo->original_name ?? basename($photo->original_path ?? 'photo.jpg');
+                
+                // Очищаем имя файла от недопустимых символов
+                $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
                 
                 if ($photo->s3_original_url) {
                     // Если файл на S3, скачиваем его временно
@@ -454,6 +484,8 @@ class YooKassaService
                                 's3_url' => $photo->s3_original_url,
                                 'status' => $response->status()
                             ]);
+                            $failedFilesCount++;
+                            continue;
                         }
                     } catch (Exception $e) {
                         Log::error("Error downloading photo from S3", [
@@ -462,20 +494,38 @@ class YooKassaService
                             's3_url' => $photo->s3_original_url,
                             'error' => $e->getMessage()
                         ]);
+                        $failedFilesCount++;
+                        continue;
                     }
-                } else {
+                } else if ($photo->original_path) {
                     // Используем локальный файл из original_path
                     $filePath = storage_path('app/public/' . $photo->original_path);
+                } else {
+                    Log::warning("Photo has no original_path or s3_original_url", [
+                        'order_id' => $order->id,
+                        'photo_id' => $photo->id
+                    ]);
+                    $failedFilesCount++;
+                    continue;
                 }
 
                 if ($filePath && file_exists($filePath)) {
-                    $zip->addFile($filePath, $fileName);
-                    Log::debug("Added photo to ZIP", [
-                        'order_id' => $order->id,
-                        'photo_id' => $photo->id,
-                        'file_path' => $filePath,
-                        'file_name' => $fileName
-                    ]);
+                    if ($zip->addFile($filePath, $fileName)) {
+                        $addedFilesCount++;
+                        Log::debug("Added photo to ZIP", [
+                            'order_id' => $order->id,
+                            'photo_id' => $photo->id,
+                            'file_path' => $filePath,
+                            'file_name' => $fileName
+                        ]);
+                    } else {
+                        Log::warning("Failed to add photo to ZIP", [
+                            'order_id' => $order->id,
+                            'photo_id' => $photo->id,
+                            'file_path' => $filePath
+                        ]);
+                        $failedFilesCount++;
+                    }
                 } else {
                     Log::warning("Photo file not found for ZIP", [
                         'order_id' => $order->id,
@@ -484,19 +534,42 @@ class YooKassaService
                         's3_original_url' => $photo->s3_original_url,
                         'original_path' => $photo->original_path
                     ]);
+                    $failedFilesCount++;
                 }
+            }
+
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Закрываем архив только если добавлен хотя бы один файл
+            if ($addedFilesCount === 0) {
+                $zip->close();
+                // Удаляем пустой архив
+                if (file_exists($zipPath)) {
+                    unlink($zipPath);
+                }
+                throw new Exception("No photos were added to ZIP archive. Added: {$addedFilesCount}, Failed: {$failedFilesCount}");
             }
 
             $zip->close();
 
+            // Проверяем, что архив действительно создан
+            if (!file_exists($zipPath)) {
+                throw new Exception("ZIP archive file was not created at path: {$zipPath}");
+            }
+
             // Удаляем временные файлы с S3
             foreach ($tempFiles as $tempFile) {
                 if (file_exists($tempFile)) {
-                    unlink($tempFile);
+                    try {
+                        unlink($tempFile);
+                    } catch (Exception $e) {
+                        Log::warning("Failed to delete temp file", [
+                            'temp_file' => $tempFile,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
                 }
             }
 
-            // Сохраняем путь к архиву в заказе
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем путь к архиву в заказе ТОЛЬКО если архив успешно создан
             $order->update([
                 'zip_path' => 'orders/' . $order->id . '.zip',
             ]);
@@ -504,7 +577,11 @@ class YooKassaService
             Log::info("ZIP archive created successfully", [
                 'order_id' => $order->id,
                 'zip_path' => $zipPath,
+                'zip_exists' => file_exists($zipPath),
+                'zip_size' => file_exists($zipPath) ? filesize($zipPath) : 0,
                 'photos_count' => $order->items->count(),
+                'added_files' => $addedFilesCount,
+                'failed_files' => $failedFilesCount,
                 'temp_files_cleaned' => count($tempFiles)
             ]);
         } catch (Exception $e) {
@@ -513,6 +590,8 @@ class YooKassaService
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Пробрасываем исключение, чтобы вызывающий код знал об ошибке
+            throw $e;
         }
     }
 }

@@ -45,6 +45,15 @@
                     <p class="text-xs text-gray-400 truncate">
                         {{ auth()->user()->email }}
                     </p>
+                    @if(auth()->user()->isPhotographer())
+                        @php
+                            $user = auth()->user()->fresh();
+                            $balance = $user->balance ?? 0;
+                        @endphp
+                        <p class="text-xs text-[#a78bfa] font-semibold mt-1">
+                            Баланс: {{ number_format($balance, 2, ',', ' ') }} ₽
+                        </p>
+                    @endif
                 </div>
             </div>
         </div>

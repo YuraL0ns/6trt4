@@ -32,6 +32,11 @@
                             @if($user->login)
                                 <p class="text-gray-400">Логин: {{ $user->login }}</p>
                             @endif
+                            @if($user->isAdmin() || $user->isPhotographer() || $user->group === 'moderator')
+                                <p class="text-lg font-semibold text-[#a78bfa] mt-2">
+                                    Баланс: {{ number_format($user->balance ?? 0, 2, ',', ' ') }} ₽
+                                </p>
+                            @endif
                         </div>
                     </div>
 
@@ -70,6 +75,12 @@
                         <div>
                             <p class="text-sm text-gray-400 mb-1">Пол</p>
                             <p class="text-white font-semibold">{{ $user->gender === 'male' ? 'Мужской' : 'Женский' }}</p>
+                        </div>
+                        @endif
+                        @if($user->isAdmin() || $user->isPhotographer() || $user->group === 'moderator')
+                        <div class="col-span-2">
+                            <p class="text-sm text-gray-400 mb-1">Баланс</p>
+                            <p class="text-white font-semibold text-lg text-[#a78bfa]">{{ number_format($user->balance ?? 0, 2, ',', ' ') }} ₽</p>
                         </div>
                         @endif
                     </div>

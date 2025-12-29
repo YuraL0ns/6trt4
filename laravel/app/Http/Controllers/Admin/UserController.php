@@ -147,22 +147,61 @@ class UserController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        $user = User::findOrFail($id);
+        try {
+            $user = User::findOrFail($id);
 
-        $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'second_name' => 'nullable|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $id,
-            'phone' => 'nullable|string|max:20',
-            'city' => 'nullable|string|max:255',
-            'gender' => 'nullable|in:male,female',
-        ]);
+            $request->validate([
+                'first_name' => 'required|string|max:255',
+                'last_name' => 'required|string|max:255',
+                'second_name' => 'nullable|string|max:255',
+                'email' => 'required|email|unique:users,email,' . $id,
+                'phone' => 'nullable|string|max:20',
+                'city' => 'nullable|string|max:255',
+                'gender' => 'nullable|in:male,female',
+            ]);
 
-        $user->update($request->only([
-            'first_name', 'last_name', 'second_name', 'email', 'phone', 'city', 'gender'
-        ]));
+            $user->update($request->only([
+                'first_name', 'last_name', 'second_name', 'email', 'phone', 'city', 'gender'
+            ]));
 
-        return back()->with('success', 'Информация о пользователе обновлена');
+            // Если запрос AJAX, возвращаем JSON
+            if ($request->ajax() || $request->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Информация о пользователе обновлена'
+                ]);
+            }
+
+            return back()->with('success', 'Информация о пользователе обновлена');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Обработка ошибок валидации
+            if ($request->ajax() || $request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'errors' => $e->errors(),
+                    'message' => 'Ошибка валидации данных'
+                ], 422);
+            }
+            return back()->withErrors($e->errors())->withInput();
+        } catch (\Exception $e) {
+            // Логирование ошибки
+            \Log::error("Admin/UserController::update error", [
+                'user_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            // Если запрос AJAX, возвращаем JSON с ошибкой
+            if ($request->ajax() || $request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => config('app.debug') ? $e->getMessage() : 'Ошибка при обновлении пользователя'
+                ], 500);
+            }
+
+            return back()->with('error', 'Ошибка при обновлении пользователя. Проверьте логи для деталей.');
+        }
     }
 }

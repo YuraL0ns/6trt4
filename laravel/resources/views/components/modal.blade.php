@@ -16,7 +16,7 @@
 
 <div id="{{ $id }}" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="{{ $id }}-title" role="dialog" aria-modal="true">
     <!-- Backdrop -->
-    <div class="fixed inset-0 bg-black bg-opacity-75 transition-opacity" onclick="document.getElementById('{{ $id }}').classList.add('hidden')"></div>
+    <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onclick="document.getElementById('{{ $id }}').classList.add('hidden')"></div>
     
     <!-- Modal -->
     <div class="flex min-h-full items-center justify-center p-4">

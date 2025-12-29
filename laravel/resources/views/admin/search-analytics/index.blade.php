@@ -172,7 +172,7 @@
             </div>
             
             <div class="mt-6">
-                {{ $searches->links() }}
+                {{ $searches->links('vendor.pagination.default') }}
             </div>
         @else
             <p class="text-gray-400 text-center py-8">Поисков не найдено</p>

@@ -76,7 +76,7 @@
         </div>
 
         <div class="mt-6">
-            {{ $users->links() }}
+            {{ $users->links('vendor.pagination.default') }}
         </div>
     @else
         <div class="text-center py-12">
@@ -89,6 +89,7 @@
         <form id="edit-user-form" method="POST">
             @csrf
             @method('PUT')
+            <div id="edit-user-errors" class="hidden mb-4 p-4 bg-red-900/20 border border-red-700 rounded-lg text-red-400"></div>
             <x-input label="Имя" name="first_name" id="edit-first-name" required />
             <x-input label="Фамилия" name="last_name" id="edit-last-name" required />
             <x-input label="Отчество" name="second_name" id="edit-second-name" />
@@ -104,7 +105,7 @@
                 </select>
             </div>
             <div class="flex space-x-3">
-                <x-button type="submit">Сохранить</x-button>
+                <x-button type="submit" id="edit-user-submit">Сохранить</x-button>
                 <x-button variant="outline" type="button" onclick="closeModal('edit-user-modal')">Отмена</x-button>
             </div>
         </form>
@@ -180,6 +181,23 @@ function toggleBlock(userId) {
 }
 
 function openEditModal(userId) {
+    // Проверяем, что модальное окно существует
+    const modal = document.getElementById('edit-user-modal');
+    const form = document.getElementById('edit-user-form');
+    const errorsDiv = document.getElementById('edit-user-errors');
+    
+    if (!modal || !form) {
+        console.error('Modal or form not found');
+        alert('Ошибка: модальное окно не найдено');
+        return;
+    }
+    
+    // Скрываем ошибки
+    if (errorsDiv) {
+        errorsDiv.classList.add('hidden');
+        errorsDiv.innerHTML = '';
+    }
+    
     // Загружаем данные пользователя
     fetch(`/admin/users/${userId}`, {
         headers: {
@@ -187,26 +205,112 @@ function openEditModal(userId) {
             'X-Requested-With': 'XMLHttpRequest'
         }
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Ошибка загрузки данных пользователя');
+        }
+        return response.json();
+    })
     .then(data => {
         // Заполняем форму данными пользователя
-        document.getElementById('edit-first-name').value = data.first_name || '';
-        document.getElementById('edit-last-name').value = data.last_name || '';
-        document.getElementById('edit-second-name').value = data.second_name || '';
-        document.getElementById('edit-email').value = data.email || '';
-        document.getElementById('edit-phone').value = data.phone || '';
-        document.getElementById('edit-city').value = data.city || '';
-        document.getElementById('edit-gender').value = data.gender || '';
+        // Используем поиск по ID (если передан) или по name
+        const setValue = (idOrName, value) => {
+            const el = document.getElementById(idOrName) || form.querySelector(`[name="${idOrName}"]`);
+            if (el) {
+                el.value = value || '';
+            } else {
+                console.warn(`Element not found: ${idOrName}`);
+            }
+        };
+        
+        setValue('edit-first-name', data.first_name);
+        setValue('edit-last-name', data.last_name);
+        setValue('edit-second-name', data.second_name);
+        setValue('edit-email', data.email);
+        setValue('edit-phone', data.phone);
+        setValue('edit-city', data.city);
+        setValue('edit-gender', data.gender);
         
         // Устанавливаем action формы
-        document.getElementById('edit-user-form').action = `/admin/users/${userId}`;
-        document.getElementById('edit-user-modal').classList.remove('hidden');
+        form.action = `/admin/users/${userId}`;
+        
+        // Показываем модальное окно
+        modal.classList.remove('hidden');
     })
     .catch(error => {
         console.error('Error loading user data:', error);
-        alert('Ошибка при загрузке данных пользователя');
+        alert('Ошибка при загрузке данных пользователя: ' + error.message);
     });
 }
+
+// Обработка отправки формы редактирования
+document.addEventListener('DOMContentLoaded', function() {
+    const editForm = document.getElementById('edit-user-form');
+    if (editForm) {
+        editForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const userId = this.action.split('/').pop();
+            const errorsDiv = document.getElementById('edit-user-errors');
+            const submitBtn = document.getElementById('edit-user-submit');
+            
+            // Скрываем ошибки
+            errorsDiv.classList.add('hidden');
+            errorsDiv.innerHTML = '';
+            
+            // Блокируем кнопку
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Сохранение...';
+            
+            fetch(this.action, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: formData
+            })
+            .then(response => {
+                return response.json().then(data => ({
+                    status: response.status,
+                    data: data
+                }));
+            })
+            .then(({status, data}) => {
+                if (status === 200 && data.success) {
+                    // Успешно обновлено
+                    closeModal('edit-user-modal');
+                    location.reload();
+                } else if (status === 422 && data.errors) {
+                    // Ошибки валидации
+                    let errorHtml = '<ul class="list-disc list-inside space-y-1">';
+                    for (const field in data.errors) {
+                        data.errors[field].forEach(error => {
+                            errorHtml += `<li>${error}</li>`;
+                        });
+                    }
+                    errorHtml += '</ul>';
+                    errorsDiv.innerHTML = errorHtml;
+                    errorsDiv.classList.remove('hidden');
+                } else {
+                    // Другая ошибка
+                    errorsDiv.innerHTML = data.message || 'Ошибка при обновлении пользователя';
+                    errorsDiv.classList.remove('hidden');
+                }
+            })
+            .catch(error => {
+                console.error('Error updating user:', error);
+                errorsDiv.innerHTML = 'Ошибка при обновлении пользователя: ' + error.message;
+                errorsDiv.classList.remove('hidden');
+            })
+            .finally(() => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Сохранить';
+            });
+        });
+    }
+});
 
 function openPasswordModal(userId) {
     document.getElementById('password-form').action = `/admin/users/${userId}/change-password`;
