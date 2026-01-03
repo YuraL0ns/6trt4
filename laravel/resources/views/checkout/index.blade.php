@@ -78,7 +78,7 @@
                     <div class="border-t border-gray-800 pt-4">
                         <div class="flex justify-between mb-2">
                             <span class="text-gray-400">Итого:</span>
-                            <span class="text-2xl font-bold text-[#a78bfa]">{{ number_format($total, 0, ',', ' ') }} ₽</span>
+                            <span class="text-2xl font-bold text-[#a78bfa]">{{ number_format($totalRounded ?? round($total), 0, ',', ' ') }} ₽</span>
                         </div>
                     </div>
                 </div>

@@ -47,7 +47,7 @@
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-400">Сумма:</span>
-                            <span class="text-white font-semibold text-xl">{{ number_format($total, 0, ',', ' ') }} ₽</span>
+                            <span class="text-white font-semibold text-xl">{{ number_format($totalRounded ?? round($total), 0, ',', ' ') }} ₽</span>
                         </div>
                         <x-button href="{{ route('checkout.index') }}" class="w-full" size="lg">
                             Перейти к оплате

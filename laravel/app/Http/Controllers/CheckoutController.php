@@ -41,8 +41,11 @@ class CheckoutController extends Controller
         $total = $cartItems->sum(function ($item) {
             return $item->photo->getPriceWithCommission();
         });
+        
+        // Округляем сумму до целого числа для отображения
+        $totalRounded = round($total);
 
-        return view('checkout.index', compact('cartItems', 'total'));
+        return view('checkout.index', compact('cartItems', 'total', 'totalRounded'));
     }
 
     /**
@@ -72,6 +75,10 @@ class CheckoutController extends Controller
         $total = $cartItems->sum(function ($item) {
             return $item->photo->getPriceWithCommission();
         });
+        
+        // Округляем сумму до целого числа, чтобы она совпадала с отображаемой в корзине
+        // Это гарантирует, что пользователь платит ту сумму, которую видит
+        $totalRounded = round($total);
 
         // Создаем заказ
         // Для авторизованных пользователей используем данные из профиля, если не указаны
@@ -92,17 +99,33 @@ class CheckoutController extends Controller
             'user_id' => Auth::id(),
             'email' => $email,
             'phone' => $phone,
-            'total_amount' => $total,
+            'total_amount' => $totalRounded, // Используем округленную сумму
             'status' => 'pending',
         ]);
 
-        // Создаем элементы заказа (цена с комиссией)
+        // Создаем элементы заказа (цена с комиссией, округленная)
+        // Округляем цены элементов, чтобы сумма совпадала с общей суммой заказа
+        $itemsTotal = 0;
+        $items = [];
         foreach ($cartItems as $cartItem) {
-            OrderItem::create([
+            $itemPrice = round($cartItem->photo->getPriceWithCommission());
+            $items[] = [
                 'order_id' => $order->id,
                 'photo_id' => $cartItem->photo_id,
-                'price' => $cartItem->photo->getPriceWithCommission(),
-            ]);
+                'price' => $itemPrice,
+            ];
+            $itemsTotal += $itemPrice;
+        }
+        
+        // Если есть разница из-за округления, корректируем последний элемент
+        if ($itemsTotal != $totalRounded && count($items) > 0) {
+            $difference = $totalRounded - $itemsTotal;
+            $items[count($items) - 1]['price'] += $difference;
+        }
+        
+        // Создаем элементы заказа
+        foreach ($items as $item) {
+            OrderItem::create($item);
         }
 
         // Создаем платеж в YooKassa

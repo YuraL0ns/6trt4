@@ -103,18 +103,9 @@ class YooKassaService
                         continue; // Пропускаем элементы с невалидной ценой
                     }
                     
-                    // Форматируем цену: округляем до 2 знаков после запятой
+                    // Форматируем цену: используем number_format для точного форматирования
                     // YooKassa требует строку в формате "100.00"
-                    $priceValue = (string) round($price, 2);
-                    // Убеждаемся, что всегда есть два знака после запятой
-                    if (strpos($priceValue, '.') === false) {
-                        $priceValue .= '.00';
-                    } else {
-                        $parts = explode('.', $priceValue);
-                        if (strlen($parts[1]) < 2) {
-                            $priceValue = $parts[0] . '.' . str_pad($parts[1], 2, '0', STR_PAD_RIGHT);
-                        }
-                    }
+                    $priceValue = number_format($price, 2, '.', '');
                     
                     $receiptItems[] = [
                         'description' => 'Цифровая фотография',
@@ -138,22 +129,50 @@ class YooKassaService
                     throw new \Exception('Не удалось создать чек: нет валидных элементов заказа');
                 }
                 
-                // Проверяем, что сумма элементов чека совпадает с общей суммой платежа
+                // Проверяем и корректируем сумму элементов чека, чтобы она точно совпадала с общей суммой платежа
+                $orderTotal = (float) $order->total_amount;
                 $receiptTotal = 0;
                 foreach ($receiptItems as $item) {
                     $receiptTotal += (float) $item['amount']['value'];
                 }
                 
-                $orderTotal = (float) $order->total_amount;
-                $difference = abs($receiptTotal - $orderTotal);
+                $difference = $orderTotal - $receiptTotal;
                 
-                // Допускаем разницу до 0.01 рубля из-за округления
-                if ($difference > 0.01) {
-                    Log::error("YooKassa createPayment: Receipt total mismatch", [
+                // Если есть разница из-за округления, корректируем последний элемент
+                if (abs($difference) > 0.001) {
+                    if (count($receiptItems) > 0) {
+                        // Корректируем цену последнего элемента
+                        $lastItem = &$receiptItems[count($receiptItems) - 1];
+                        $lastItemPrice = (float) $lastItem['amount']['value'];
+                        $correctedPrice = round($lastItemPrice + $difference, 2);
+                        
+                        // Форматируем скорректированную цену
+                        $correctedPriceValue = number_format($correctedPrice, 2, '.', '');
+                        $lastItem['amount']['value'] = $correctedPriceValue;
+                        
+                        Log::info("YooKassa createPayment: Adjusted last item price", [
+                            'order_id' => $order->id,
+                            'original_price' => $lastItemPrice,
+                            'corrected_price' => $correctedPrice,
+                            'difference' => $difference
+                        ]);
+                        
+                        // Пересчитываем сумму после корректировки
+                        $receiptTotal = 0;
+                        foreach ($receiptItems as $item) {
+                            $receiptTotal += (float) $item['amount']['value'];
+                        }
+                    }
+                }
+                
+                // Финальная проверка (допускаем разницу до 0.01 рубля из-за округления)
+                $finalDifference = abs($receiptTotal - $orderTotal);
+                if ($finalDifference > 0.01) {
+                    Log::error("YooKassa createPayment: Receipt total mismatch after correction", [
                         'order_id' => $order->id,
                         'order_total' => $orderTotal,
                         'receipt_total' => $receiptTotal,
-                        'difference' => $difference,
+                        'difference' => $finalDifference,
                         'receipt_items' => $receiptItems
                     ]);
                     throw new \Exception("Сумма элементов чека ({$receiptTotal}) не совпадает с суммой заказа ({$orderTotal})");

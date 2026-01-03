@@ -27,8 +27,11 @@ class CartController extends Controller
         $total = $cartItems->sum(function ($item) {
             return $item->photo->getPriceWithCommission();
         });
+        
+        // Округляем сумму до целого числа для отображения
+        $totalRounded = round($total);
 
-        return view('cart.index', compact('cartItems', 'total'));
+        return view('cart.index', compact('cartItems', 'total', 'totalRounded'));
     }
 
     /**
