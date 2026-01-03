@@ -601,11 +601,10 @@ async function loadSimilarPhotosInModal(photoId, photoData) {
             results = searchData.results || [];
         }
         
-        // Фильтруем результаты: исключаем фотографии из корзины и ограничиваем до 10
+        // Фильтруем результаты: исключаем фотографии из корзины (БЕЗ ограничения количества)
         const cartPhotoIds = photoData.cart_photo_ids || [];
         const filteredResults = results
-            .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)))
-            .slice(0, 10);
+            .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)));
         
         // Отображаем результаты в модальном окне
         displaySimilarPhotosInModal(filteredResults, similarGrid);
@@ -659,8 +658,8 @@ async function displaySimilarPhotosInModal(results, gridElement) {
         return;
     }
     
-    // Создаем элементы для каждой фотографии (максимум 10)
-    validPhotos.slice(0, 10).forEach((photo) => {
+    // Создаем элементы для каждой фотографии (показываем все найденные)
+    validPhotos.forEach((photo) => {
         const photoElement = document.createElement('div');
         photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
         photoElement.onclick = () => {
@@ -1079,14 +1078,14 @@ async function showSearchResults(results, total) {
         console.error('Error fetching cart photo IDs:', error);
     }
     
-    // Фильтруем результаты: исключаем фотографии из корзины и ограничиваем до 10
+    // Фильтруем результаты: исключаем фотографии из корзины (БЕЗ ограничения количества)
     const filteredResults = results
-        .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)))
-        .slice(0, 10);
+        .filter(r => !cartPhotoIds.includes(String(r.photo_id || r.id)));
     
     const filteredTotal = filteredResults.length;
+    const excludedFromCart = total - filteredTotal;
     
-    messageDiv.textContent = `Найдено похожих фотографий: ${filteredTotal}${filteredTotal < total ? ` (из ${total}, исключены фотографии из корзины)` : ''}`;
+    messageDiv.textContent = `Найдено похожих фотографий: ${filteredTotal}${excludedFromCart > 0 ? ` (из ${total}, исключены ${excludedFromCart} фотографий из корзины)` : (filteredTotal < total ? ` (из ${total})` : '')}`;
     messageDiv.classList.remove('text-red-400', 'text-yellow-400');
     messageDiv.classList.add('text-green-400');
     
@@ -1173,8 +1172,8 @@ async function showSearchResults(results, total) {
             return;
         }
         
-        // Создаем элементы для каждой фотографии (максимум 10)
-        validPhotos.slice(0, 10).forEach((photo, index) => {
+        // Создаем элементы для каждой фотографии (показываем все найденные)
+        validPhotos.forEach((photo, index) => {
             const photoElement = document.createElement('div');
             photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
             photoElement.onclick = () => openPhotoModal(photo.id);

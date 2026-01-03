@@ -92,11 +92,35 @@ class YooKassaService
             if ($order->email || $order->phone) {
                 $receiptItems = [];
                 foreach ($order->items as $item) {
+                    // Убеждаемся, что цена положительная и правильно форматируется
+                    $price = (float) $item->price;
+                    if ($price <= 0) {
+                        Log::warning("YooKassa createPayment: Invalid price for item", [
+                            'item_id' => $item->id,
+                            'price' => $item->price,
+                            'order_id' => $order->id
+                        ]);
+                        continue; // Пропускаем элементы с невалидной ценой
+                    }
+                    
+                    // Форматируем цену: округляем до 2 знаков после запятой
+                    // YooKassa требует строку в формате "100.00"
+                    $priceValue = (string) round($price, 2);
+                    // Убеждаемся, что всегда есть два знака после запятой
+                    if (strpos($priceValue, '.') === false) {
+                        $priceValue .= '.00';
+                    } else {
+                        $parts = explode('.', $priceValue);
+                        if (strlen($parts[1]) < 2) {
+                            $priceValue = $parts[0] . '.' . str_pad($parts[1], 2, '0', STR_PAD_RIGHT);
+                        }
+                    }
+                    
                     $receiptItems[] = [
                         'description' => 'Цифровая фотография',
-                        'quantity' => '1.00',
+                        'quantity' => '1.00', // Строка в формате "1.00" согласно документации
                         'amount' => [
-                            'value' => number_format($item->price, 2, '.', ''),
+                            'value' => $priceValue, // Строка в формате "100.00"
                             'currency' => 'RUB',
                         ],
                         'vat_code' => 1, // НДС не облагается (ст. 149 НК РФ, п. 26)
@@ -104,6 +128,43 @@ class YooKassaService
                         'payment_mode' => 'full_payment', // Способ расчета: полный расчет
                     ];
                 }
+                
+                // Проверяем, что есть хотя бы один элемент в чеке
+                if (empty($receiptItems)) {
+                    Log::error("YooKassa createPayment: No valid items for receipt", [
+                        'order_id' => $order->id,
+                        'items_count' => $order->items->count()
+                    ]);
+                    throw new \Exception('Не удалось создать чек: нет валидных элементов заказа');
+                }
+                
+                // Проверяем, что сумма элементов чека совпадает с общей суммой платежа
+                $receiptTotal = 0;
+                foreach ($receiptItems as $item) {
+                    $receiptTotal += (float) $item['amount']['value'];
+                }
+                
+                $orderTotal = (float) $order->total_amount;
+                $difference = abs($receiptTotal - $orderTotal);
+                
+                // Допускаем разницу до 0.01 рубля из-за округления
+                if ($difference > 0.01) {
+                    Log::error("YooKassa createPayment: Receipt total mismatch", [
+                        'order_id' => $order->id,
+                        'order_total' => $orderTotal,
+                        'receipt_total' => $receiptTotal,
+                        'difference' => $difference,
+                        'receipt_items' => $receiptItems
+                    ]);
+                    throw new \Exception("Сумма элементов чека ({$receiptTotal}) не совпадает с суммой заказа ({$orderTotal})");
+                }
+                
+                Log::info("YooKassa createPayment: Receipt totals match", [
+                    'order_id' => $order->id,
+                    'order_total' => $orderTotal,
+                    'receipt_total' => $receiptTotal,
+                    'items_count' => count($receiptItems)
+                ]);
 
                 $receipt = [
                     'customer' => [],
@@ -123,6 +184,15 @@ class YooKassaService
                 }
 
                 $paymentData['receipt'] = $receipt;
+                
+                // Детальное логирование receipt для отладки
+                Log::info("YooKassa createPayment: Receipt data", [
+                    'order_id' => $order->id,
+                    'receipt' => $receipt,
+                    'receipt_items_count' => count($receiptItems),
+                    'receipt_total' => $receiptTotal,
+                    'order_total' => $orderTotal,
+                ]);
                 
                 Log::info("YooKassa createPayment: Receipt added", [
                     'order_id' => $order->id,
