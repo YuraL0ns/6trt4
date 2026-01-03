@@ -49,7 +49,7 @@
             @endif
         </div>
 
-        <div>
+        <div id="create-ticket">
             <x-card title="Создать обращение">
                 <form action="{{ route('support.store') }}" method="POST" class="space-y-4">
                     @csrf

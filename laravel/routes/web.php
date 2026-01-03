@@ -44,6 +44,11 @@ Route::get('/photographers', [PhotographerController::class, 'index'])->name('ph
 Route::get('/photographer/{hashLogin}', [PhotographerController::class, 'show'])->name('photographers.show');
 
 Route::get('/contacts', [ContactController::class, 'index'])->name('contacts');
+
+// Страницы, созданные через админ-панель
+Route::get('/pages/{url}', [App\Http\Controllers\PageController::class, 'show'])
+    ->where('url', '.*')
+    ->name('pages.show');
 Route::post('/contacts', [ContactController::class, 'store'])->name('contacts.store');
 
 // Корзина (доступна для всех)
@@ -109,6 +114,7 @@ Route::middleware(['auth', 'group:photo'])->prefix('photo')->name('photo.')->gro
     Route::post('/events/{event:slug}/start-analysis', [App\Http\Controllers\Photo\EventController::class, 'startAnalysis'])->name('events.start-analysis');
     Route::get('/events/{event:slug}/status', [App\Http\Controllers\Photo\EventController::class, 'analysisStatus'])->name('events.status');
     Route::get('/analytics', [App\Http\Controllers\Photo\AnalyticsController::class, 'index'])->name('analytics');
+    Route::get('/analytics/event/{eventId}/download-purchased-photos', [App\Http\Controllers\Photo\AnalyticsController::class, 'downloadPurchasedPhotos'])->name('analytics.download-purchased-photos');
     Route::get('/messages', [App\Http\Controllers\Photo\MessageController::class, 'index'])->name('messages.index');
     Route::get('/messages/{userId}', [App\Http\Controllers\Photo\MessageController::class, 'show'])->name('messages.show');
     Route::post('/messages/{userId}', [App\Http\Controllers\Photo\MessageController::class, 'store'])->name('messages.store');
@@ -178,6 +184,7 @@ Route::middleware(['auth', 'group:admin'])->prefix('admin')->name('admin.')->gro
     Route::post('/support/{id}/close', [App\Http\Controllers\Admin\SupportController::class, 'close'])->name('support.close');
     Route::get('/pages', [App\Http\Controllers\Admin\PageController::class, 'index'])->name('pages.index');
     Route::post('/pages', [App\Http\Controllers\Admin\PageController::class, 'store'])->name('pages.store');
+    Route::get('/pages/{id}/edit-data', [App\Http\Controllers\Admin\PageController::class, 'editData'])->name('pages.edit-data');
     Route::put('/pages/{id}', [App\Http\Controllers\Admin\PageController::class, 'update'])->name('pages.update');
     Route::delete('/pages/{id}', [App\Http\Controllers\Admin\PageController::class, 'destroy'])->name('pages.destroy');
     Route::get('/settings', [App\Http\Controllers\Admin\SettingController::class, 'index'])->name('settings.index');

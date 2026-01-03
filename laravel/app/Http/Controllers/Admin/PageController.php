@@ -62,6 +62,22 @@ class PageController extends Controller
     }
 
     /**
+     * Получить данные страницы для редактирования (AJAX)
+     */
+    public function editData(string $id)
+    {
+        $page = Page::findOrFail($id);
+        
+        return response()->json([
+            'page_title' => $page->page_title,
+            'page_url' => $page->page_url,
+            'page_meta_descr' => $page->page_meta_descr,
+            'page_meta_key' => $page->page_meta_key,
+            'page_content' => $page->page_content,
+        ]);
+    }
+
+    /**
      * Удалить страницу
      */
     public function destroy(string $id)

@@ -16,7 +16,7 @@
                 <x-input label="Дата проведения" name="date" type="date" value="{{ old('date', $event->date->format('Y-m-d')) }}" required />
             </div>
             
-            <x-input label="Цена за фотографию (₽)" name="price" type="number" min="0" step="0.01" value="{{ old('price', $event->price) }}" required />
+            <x-input label="Цена за фотографию (₽)" name="price" type="number" min="0" step="any" value="{{ old('price', number_format($event->price, 2, '.', '')) }}" required />
             
             <x-select 
                 label="Статус" 

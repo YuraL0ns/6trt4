@@ -78,9 +78,36 @@ class EventController extends Controller
             'description' => 'nullable|string|max:5000',
         ]);
 
-        $event->update($request->only([
-            'title', 'city', 'date', 'price', 'status', 'description'
-        ]));
+        // Получаем старую цену для сравнения
+        $oldPrice = (float) $event->price;
+        
+        // Преобразуем цену в правильный формат (decimal с 2 знаками после запятой)
+        // Используем number_format для правильного форматирования, затем преобразуем обратно в float
+        $price = (float) number_format((float) $request->price, 2, '.', '');
+        
+        // Обновляем событие
+        $event->update([
+            'title' => $request->title,
+            'city' => $request->city,
+            'date' => $request->date,
+            'price' => $price,
+            'status' => $request->status,
+            'description' => $request->description,
+        ]);
+
+        // Если цена изменилась, синхронизируем цены всех фотографий события
+        // Используем небольшой допуск для сравнения float значений
+        if (abs($oldPrice - $price) > 0.001) {
+            $photosUpdated = \App\Models\Photo::where('event_id', $event->id)
+                ->update(['price' => $price]);
+            
+            \Log::info("Event price updated, photos prices synced", [
+                'event_id' => $event->id,
+                'old_price' => $oldPrice,
+                'new_price' => $price,
+                'photos_updated' => $photosUpdated
+            ]);
+        }
 
         return back()->with('success', 'Событие обновлено');
     }

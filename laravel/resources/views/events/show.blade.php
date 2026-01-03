@@ -199,6 +199,7 @@
                         $photoTimeMinutes = $photoTime ? ($photoTime->hour * 60 + $photoTime->minute) : null;
                     @endphp
                     <div 
+                        id="photo-{{ $photo->id }}"
                         class="group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer photo-item" 
                         onclick="openPhotoModal('{{ $photo->id }}')"
                         data-photo-id="{{ $photo->id }}"
@@ -284,6 +285,23 @@
 let currentPhotoIndex = -1;
 let photoIds = @json($photos->pluck('id')->toArray());
 let isLoadingPhoto = false; // Флаг для предотвращения множественных загрузок
+
+// Проверяем hash в URL при загрузке страницы для открытия конкретной фотографии
+document.addEventListener('DOMContentLoaded', function() {
+    const hash = window.location.hash;
+    if (hash && hash.startsWith('#photo-')) {
+        const photoId = hash.replace('#photo-', '');
+        // Небольшая задержка, чтобы страница успела загрузиться
+        setTimeout(function() {
+            openPhotoModal(photoId);
+            // Прокручиваем к элементу фотографии
+            const photoElement = document.getElementById('photo-' + photoId);
+            if (photoElement) {
+                photoElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 500);
+    }
+});
 
 function openPhotoModal(photoId) {
     // Находим индекс текущей фотографии

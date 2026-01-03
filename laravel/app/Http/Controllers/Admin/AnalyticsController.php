@@ -86,6 +86,54 @@ class AnalyticsController extends Controller
 
         $orders = $ordersQuery->orderBy('created_at', 'desc')->paginate(25)->withQueryString();
 
+        // Получаем все купленные фотографии с количеством продаж за период
+        $purchasedPhotosQuery = \App\Models\Photo::whereHas('orderItems.order', function($q) use ($startDate, $endDate) {
+                $q->where('status', 'paid')
+                  ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
+            })
+            ->with(['event', 'orderItems.order' => function($q) use ($startDate, $endDate) {
+                $q->where('status', 'paid')
+                  ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
+            }]);
+
+        // Поиск по событию
+        if ($request->has('search_event') && $request->search_event) {
+            $purchasedPhotosQuery->whereHas('event', function($q) use ($request) {
+                $q->where('title', 'like', '%' . $request->search_event . '%');
+            });
+        }
+
+        $purchasedPhotos = $purchasedPhotosQuery->get()
+            ->map(function($photo) use ($startDate, $endDate) {
+                $salesCount = $photo->orderItems->filter(function($item) use ($startDate, $endDate) {
+                    $order = $item->order;
+                    return $order->status === 'paid' && 
+                           $order->created_at >= $startDate . ' 00:00:00' && 
+                           $order->created_at <= $endDate . ' 23:59:59';
+                })->count();
+                
+                $totalRevenue = $photo->orderItems->filter(function($item) use ($startDate, $endDate) {
+                    $order = $item->order;
+                    return $order->status === 'paid' && 
+                           $order->created_at >= $startDate . ' 00:00:00' && 
+                           $order->created_at <= $endDate . ' 23:59:59';
+                })->sum('price');
+                
+                return [
+                    'id' => $photo->id,
+                    'uuid' => $photo->id,
+                    'event' => $photo->event,
+                    'event_slug' => $photo->event->slug ?? $photo->event->id,
+                    'sales_count' => $salesCount,
+                    'total_revenue' => $totalRevenue,
+                ];
+            })
+            ->filter(function($item) {
+                return $item['sales_count'] > 0;
+            })
+            ->sortByDesc('sales_count')
+            ->values();
+
         return view('admin.analytics', compact(
             'totalRevenue',
             'totalOrders',
@@ -95,7 +143,8 @@ class AnalyticsController extends Controller
             'monthlyStats',
             'startDate',
             'endDate',
-            'orders'
+            'orders',
+            'purchasedPhotos'
         ));
     }
 }

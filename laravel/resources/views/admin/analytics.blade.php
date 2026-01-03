@@ -163,6 +163,59 @@
             <p class="text-gray-400 text-center py-8">Нет данных за выбранный период</p>
         @endif
     </x-card>
+
+    <!-- Таблица купленных фотографий -->
+    <x-card title="Купленные фотографии" class="mt-6">
+        @if(isset($purchasedPhotos) && count($purchasedPhotos) > 0)
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-gray-700">
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-gray-300">UUID</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-gray-300">Событие</th>
+                            <th class="text-center py-3 px-4 text-sm font-semibold text-gray-300">Количество продаж</th>
+                            <th class="text-right py-3 px-4 text-sm font-semibold text-gray-300">Выручка</th>
+                            <th class="text-center py-3 px-4 text-sm font-semibold text-gray-300">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($purchasedPhotos as $photo)
+                            <tr class="border-b border-gray-800 hover:bg-gray-800/50">
+                                <td class="py-3 px-4">
+                                    <code class="text-xs text-gray-400 font-mono">{{ substr($photo['uuid'], 0, 8) }}...</code>
+                                </td>
+                                <td class="py-3 px-4 text-gray-300">
+                                    <div class="text-sm">{{ $photo['event']->title ?? 'Неизвестно' }}</div>
+                                    @if($photo['event'])
+                                        <div class="text-xs text-gray-500">{{ $photo['event']->city ?? '' }}</div>
+                                    @endif
+                                </td>
+                                <td class="py-3 px-4 text-center text-white font-semibold">
+                                    {{ $photo['sales_count'] }}
+                                </td>
+                                <td class="py-3 px-4 text-right text-[#a78bfa] font-semibold">
+                                    {{ number_format($photo['total_revenue'], 0, ',', ' ') }} ₽
+                                </td>
+                                <td class="py-3 px-4 text-center">
+                                    @if($photo['event'])
+                                        <a href="{{ route('events.show', $photo['event_slug']) }}#photo-{{ $photo['uuid'] }}" 
+                                           target="_blank"
+                                           class="text-[#a78bfa] hover:text-[#8b5cf6] text-sm">
+                                            Открыть фото
+                                        </a>
+                                    @else
+                                        <span class="text-gray-500 text-sm">-</span>
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        @else
+            <p class="text-gray-400 text-center py-8">Купленные фотографии не найдены</p>
+        @endif
+    </x-card>
 @endsection
 
 @push('scripts')
