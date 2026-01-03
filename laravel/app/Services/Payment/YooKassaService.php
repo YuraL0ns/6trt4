@@ -20,24 +20,38 @@ class YooKassaService
 
     public function __construct()
     {
-        $this->shopId = config('services.yookassa.shop_id');
-        $this->secretKey = config('services.yookassa.secret_key');
-        $this->testMode = config('services.yookassa.test_mode', true);
+        $shopId = config('services.yookassa.shop_id');
+        $secretKey = config('services.yookassa.secret_key');
+        $testMode = config('services.yookassa.test_mode', true);
 
-        if (empty($this->shopId) || empty($this->secretKey)) {
-            Log::error("YooKassaService: shop_id or secret_key is empty", [
-                'shop_id_set' => !empty($this->shopId),
-                'secret_key_set' => !empty($this->secretKey)
+        // Строгая проверка на null и пустые значения
+        if ($shopId === null || $shopId === '' || $secretKey === null || $secretKey === '') {
+            Log::error("YooKassaService: shop_id or secret_key is empty or null", [
+                'shop_id' => $shopId !== null ? 'set' : 'null',
+                'secret_key' => $secretKey !== null ? 'set' : 'null'
             ]);
             throw new \Exception('YooKassa credentials not configured. Please check services.yookassa.shop_id and services.yookassa.secret_key in config/services.php');
         }
 
+        // Присваиваем только после проверки, чтобы избежать TypeError
+        $this->shopId = (string) $shopId;
+        $this->secretKey = (string) $secretKey;
+        $this->testMode = (bool) $testMode;
+
         $this->client = new Client();
         $this->client->setAuth($this->shopId, $this->secretKey);
         
+        // Определяем реальный режим работы на основе ключей
+        // Тестовые ключи обычно начинаются с определенных префиксов
+        $isTestKey = (!empty($this->secretKey) && str_starts_with($this->secretKey, 'test_')) || 
+                     (!empty($this->shopId) && str_starts_with($this->shopId, '381764678')) || // Тестовый shop_id
+                     $this->testMode;
+        
         Log::info("YooKassaService: Initialized", [
             'shop_id' => $this->shopId,
-            'test_mode' => $this->testMode
+            'test_mode_config' => $this->testMode,
+            'is_test_key' => $isTestKey,
+            'warning' => $isTestKey ? 'Используются тестовые ключи YooKassa!' : 'Используются продакшн ключи YooKassa'
         ]);
     }
 
@@ -50,25 +64,80 @@ class YooKassaService
             // Получаем webhook URL для уведомлений
             $webhookUrl = route('payment.webhook');
             
-            $payment = $this->client->createPayment(
-                [
-                    'amount' => [
-                        'value' => number_format($order->total_amount, 2, '.', ''),
-                        'currency' => 'RUB',
-                    ],
-                    'confirmation' => [
-                        'type' => 'redirect',
-                        'return_url' => $returnUrl,
-                    ],
-                    'capture' => true,
-                    'description' => "Заказ #{$order->id} - Hunter-Photo.Ru",
-                    'metadata' => [
-                        'order_id' => $order->id,
-                        'user_id' => $order->user_id,
-                    ],
-                    // Примечание: Webhook URL нужно настроить в личном кабинете YooKassa
-                    // Не передаем receipt, так как он не требуется для нашего случая
+            // Загружаем items заказа, если они еще не загружены
+            if (!$order->relationLoaded('items')) {
+                $order->load('items');
+            }
+            
+            // Формируем данные для платежа
+            $paymentData = [
+                'amount' => [
+                    'value' => number_format($order->total_amount, 2, '.', ''),
+                    'currency' => 'RUB',
                 ],
+                'confirmation' => [
+                    'type' => 'redirect',
+                    'return_url' => $returnUrl,
+                ],
+                'capture' => true,
+                'description' => "Заказ #{$order->id} - Hunter-Photo.Ru",
+                'metadata' => [
+                    'order_id' => $order->id,
+                    'user_id' => $order->user_id,
+                ],
+            ];
+
+            // Добавляем receipt для соблюдения требований YooKassa (54-ФЗ)
+            // Receipt обязателен, если в настройках магазина включена отправка чеков
+            if ($order->email || $order->phone) {
+                $receiptItems = [];
+                foreach ($order->items as $item) {
+                    $receiptItems[] = [
+                        'description' => 'Цифровая фотография',
+                        'quantity' => '1.00',
+                        'amount' => [
+                            'value' => number_format($item->price, 2, '.', ''),
+                            'currency' => 'RUB',
+                        ],
+                        'vat_code' => 1, // НДС не облагается (ст. 149 НК РФ, п. 26)
+                        'payment_subject' => 'service', // Предмет расчета: услуга (для цифровых товаров)
+                        'payment_mode' => 'full_payment', // Способ расчета: полный расчет
+                    ];
+                }
+
+                $receipt = [
+                    'customer' => [],
+                    'items' => $receiptItems,
+                ];
+
+                if ($order->email) {
+                    $receipt['customer']['email'] = $order->email;
+                }
+                if ($order->phone) {
+                    // Форматируем телефон для YooKassa (только цифры, начинается с +)
+                    $phone = preg_replace('/[^0-9+]/', '', $order->phone);
+                    if (!str_starts_with($phone, '+')) {
+                        $phone = '+7' . preg_replace('/^8|^7/', '', $phone);
+                    }
+                    $receipt['customer']['phone'] = $phone;
+                }
+
+                $paymentData['receipt'] = $receipt;
+                
+                Log::info("YooKassa createPayment: Receipt added", [
+                    'order_id' => $order->id,
+                    'items_count' => count($receiptItems),
+                    'has_email' => !empty($order->email),
+                    'has_phone' => !empty($order->phone)
+                ]);
+            } else {
+                Log::warning("YooKassa createPayment: No email or phone for receipt", [
+                    'order_id' => $order->id
+                ]);
+            }
+
+            $payment = $this->client->createPayment(
+                $paymentData,
                 uniqid('', true)
             );
             

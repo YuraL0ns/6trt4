@@ -1742,37 +1742,67 @@ def process_event_photos(self, event_id: str, analyses: Dict[str, bool]):
         logger.error(f"HARD TIMEOUT in process_event_photos for event {event_id}: {str(e)}")
         task_logger.critical(error_msg, exc_info=True, event_id=event_id, error=str(e))
         
+        # Получаем информацию об ошибке для сериализации
+        error_message = str(e)
+        error_traceback = traceback.format_exc()
+        
         # Сохраняем информацию об ошибке в метаданные задачи
         self.update_state(
             state='FAILURE',
             meta={
-                'error': str(e),
+                'error': error_message,
                 'error_type': 'TimeLimitExceeded',
                 'event_id': event_id,
+                'traceback': error_traceback
             }
         )
         
-        # Пробрасываем исключение
-        raise
+        # ВАЖНО: Для TimeLimitExceeded возвращаем словарь вместо raise
+        # Это позволяет избежать проблем с сериализацией исключений в JSON backend
+        return {
+            "status": "error",
+            "error": error_message,
+            "error_type": "TimeLimitExceeded",
+            "event_id": event_id,
+            "traceback": error_traceback,
+            "total_processed": idx - 1 if 'idx' in locals() else 0,
+            "successfully_processed": successfully_processed if 'successfully_processed' in locals() else 0,
+            "failed_count": len(failed_photos) if 'failed_photos' in locals() else 0,
+        }
     
     except Exception as e:
         error_msg = f"КРИТИЧЕСКАЯ ОШИБКА в process_event_photos для события {event_id}"
         logger.error(f"ERROR in process_event_photos for event {event_id}: {str(e)}", exc_info=True)
         task_logger.critical(error_msg, exc_info=True, event_id=event_id, error=str(e))
         
+        # Получаем информацию об ошибке для сериализации
+        error_type = type(e).__name__
+        error_message = str(e)
+        error_traceback = traceback.format_exc()
+        
         # Сохраняем информацию об ошибке в метаданные задачи
         self.update_state(
             state='FAILURE',
             meta={
-                'error': str(e),
-                'error_type': type(e).__name__,
+                'error': error_message,
+                'error_type': error_type,
                 'event_id': event_id,
-                'traceback': traceback.format_exc()
+                'traceback': error_traceback
             }
         )
         
-        # Пробрасываем исключение дальше, чтобы Celery мог его обработать
-        raise
+        # ВАЖНО: Не пробрасываем исключение, а возвращаем словарь с ошибкой
+        # Это позволяет избежать проблем с сериализацией исключений в JSON backend
+        return {
+            "status": "error",
+            "error": error_message,
+            "error_type": error_type,
+            "event_id": event_id,
+            "traceback": error_traceback,
+            "total_processed": idx - 1 if 'idx' in locals() else 0,
+            "successfully_processed": successfully_processed if 'successfully_processed' in locals() else 0,
+            "failed_count": len(failed_photos) if 'failed_photos' in locals() else 0,
+        }
     finally:
         db.close()
         logger.debug(f"Database connection closed for event {event_id}")

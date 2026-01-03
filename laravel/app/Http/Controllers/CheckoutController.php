@@ -110,7 +110,8 @@ class CheckoutController extends Controller
             \Log::info("CheckoutController::store: Starting payment creation", [
                 'order_id' => $order->id,
                 'total_amount' => $total,
-                'cart_items_count' => $cartItems->count()
+                'cart_items_count' => $cartItems->count(),
+                'user_id' => Auth::id()
             ]);
             
             $returnUrl = route('orders.show', $order->id);
@@ -121,7 +122,8 @@ class CheckoutController extends Controller
             \Log::info("CheckoutController::store: Payment created successfully", [
                 'order_id' => $order->id,
                 'payment_id' => $payment['payment_id'] ?? null,
-                'confirmation_url' => $payment['confirmation_url'] ?? null
+                'confirmation_url' => $payment['confirmation_url'] ?? null,
+                'payment_array' => $payment
             ]);
 
             // Очищаем корзину ТОЛЬКО после успешного создания платежа
@@ -129,9 +131,15 @@ class CheckoutController extends Controller
             \Log::info("CheckoutController::store: Cart cleared", ['order_id' => $order->id]);
 
             // Редирект на страницу оплаты YooKassa
-            if (isset($payment['confirmation_url'])) {
-                return redirect($payment['confirmation_url']);
+            if (!empty($payment['confirmation_url'])) {
+                \Log::info("CheckoutController::store: Redirecting to payment", [
+                    'confirmation_url' => $payment['confirmation_url']
+                ]);
+                return redirect()->away($payment['confirmation_url']);
             } else {
+                \Log::error("CheckoutController::store: Confirmation URL is empty", [
+                    'payment' => $payment
+                ]);
                 throw new \Exception('Confirmation URL не получен от YooKassa');
             }
         } catch (\Exception $e) {
@@ -146,7 +154,7 @@ class CheckoutController extends Controller
             $order->items()->delete();
             $order->delete();
             
-            return back()->with('error', 'Ошибка при создании платежа: ' . $e->getMessage());
+            return back()->with('error', 'Ошибка при создании платежа: ' . $e->getMessage())->withInput();
         }
     }
 }

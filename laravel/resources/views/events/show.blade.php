@@ -288,9 +288,19 @@ let isLoadingPhoto = false; // Флаг для предотвращения мн
 function openPhotoModal(photoId) {
     // Находим индекс текущей фотографии
     currentPhotoIndex = photoIds.indexOf(photoId);
+    
+    // Если фотография не найдена в основном списке (например, из похожих результатов),
+    // добавляем её во временный список для навигации
     if (currentPhotoIndex === -1) {
-        console.error('Photo ID not found in list');
-        return;
+        console.log('Photo ID not found in main list, adding temporarily:', photoId);
+        photoIds.push(photoId);
+        currentPhotoIndex = photoIds.length - 1;
+    }
+    
+    // Открываем модальное окно, если оно закрыто
+    const modal = document.getElementById('photo-modal');
+    if (modal && modal.classList.contains('hidden')) {
+        modal.classList.remove('hidden');
     }
     
     loadPhoto(photoId);
@@ -654,8 +664,8 @@ async function displaySimilarPhotosInModal(results, gridElement) {
         const photoElement = document.createElement('div');
         photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
         photoElement.onclick = () => {
-            // Закрываем текущее модальное окно и открываем новое
-            document.getElementById('photo-modal').classList.add('hidden');
+            // Открываем новую фотографию в том же модальном окне
+            // Не закрываем модальное окно, чтобы избежать мерцания
             openPhotoModal(photo.id);
         };
         

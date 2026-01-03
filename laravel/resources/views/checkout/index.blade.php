@@ -15,8 +15,19 @@
                     @csrf
                     
                     @auth
-                        <x-input label="Email" name="email" type="email" value="{{ auth()->user()->email }}" required />
-                        <x-input label="Телефон" name="phone" type="tel" value="{{ auth()->user()->phone }}" />
+                        <x-input label="Email" name="email" type="email" value="{{ auth()->user()->email }}" required readonly />
+                        @if(auth()->user()->phone)
+                            <input type="hidden" name="phone" value="{{ auth()->user()->phone }}">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Телефон</label>
+                                <div class="px-4 py-2 bg-[#1e1e1e] border border-gray-700 rounded-lg text-gray-400">
+                                    {{ auth()->user()->phone }}
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">Телефон взят из вашего профиля</p>
+                            </div>
+                        @else
+                            <x-input label="Телефон" name="phone" type="tel" placeholder="+7 (999) 999-99-99" value="{{ old('phone') }}" />
+                        @endif
                     @else
                         <x-input label="Email" name="email" type="email" placeholder="email@example.com" value="{{ old('email') }}" required />
                         <x-input label="Телефон" name="phone" type="tel" placeholder="+7 (999) 999-99-99" value="{{ old('phone') }}" />

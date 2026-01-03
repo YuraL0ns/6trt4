@@ -1,5 +1,9 @@
 from celery import Celery
+from celery.signals import task_failure, task_prerun
 from app.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "hunter_photo",
@@ -12,6 +16,21 @@ celery_app = Celery(
         "tasks.event_archive",
     ]
 )
+
+# Обработчик ошибок десериализации результатов
+@task_failure.connect
+def handle_task_failure(sender=None, task_id=None, exception=None, traceback=None, einfo=None, **kwargs):
+    """Обработчик ошибок выполнения задач"""
+    if isinstance(exception, ValueError) and "Exception information must include" in str(exception):
+        # Это ошибка десериализации - пытаемся удалить поврежденный результат
+        logger.warning(f"Обнаружена ошибка десериализации для задачи {task_id}, удаляем поврежденный результат")
+        try:
+            from celery.backends.redis import RedisBackend
+            backend = RedisBackend(app=celery_app)
+            backend.delete(task_id)
+            logger.info(f"Поврежденный результат задачи {task_id} удален из Redis")
+        except Exception as e:
+            logger.error(f"Не удалось удалить поврежденный результат задачи {task_id}: {str(e)}")
 
 celery_app.conf.update(
     task_serializer="json",

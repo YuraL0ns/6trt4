@@ -41,9 +41,9 @@ return [
     ],
 
     'yookassa' => [
-        'shop_id' => env('YOOKASSA_SHOP_ID'),
-        'secret_key' => env('YOOKASSA_SECRET_KEY'),
-        'test_mode' => env('YOOKASSA_TEST_MODE', true),
+        'shop_id' => env('YOO_KASSA_SHOP_ID') ?: env('YOOKASSA_SHOP_ID'), // Поддержка обоих вариантов
+        'secret_key' => env('YOO_KASSA_SECRET_KEY') ?: env('YOOKASSA_SECRET_KEY'), // Поддержка обоих вариантов
+        'test_mode' => filter_var(env('YOOKASSA_TEST_MODE', env('YOO_KASSA_TEST_MODE', true)), FILTER_VALIDATE_BOOLEAN),
     ],
 
 ];
