@@ -201,9 +201,16 @@ services:
       - fastapi
     networks:
       - hunter-photo-network
+    # ИСПРАВЛЕНИЕ ОШИБКИ 2: Переход с solo pool на threads pool для параллелизма
+    # Старый код (закомментирован для возможности отката):
     # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем -P solo для ML библиотек (InsightFace, OpenCV, ONNX Runtime)
     # prefork ломает ML библиотеки, solo = один процесс, один поток (безопасно)
-    command: celery -A tasks.celery_app worker --loglevel=info -P solo --queues=celery,high_priority,default,low_priority
+    # command: celery -A tasks.celery_app worker --loglevel=info -P solo --queues=celery,high_priority,default,low_priority
+    
+    # Новый код: Используем threads pool с 8 потоками для параллельной обработки
+    # Это решает проблему блокировки всех запросов во время обработки фотографий
+    # Threads pool совместим с ML библиотеками (InsightFace, OpenCV, ONNX Runtime)
+    command: celery -A tasks.celery_app worker --loglevel=info -P threads --concurrency=8 --queues=celery,high_priority,default,low_priority
 
 volumes:
   postgres_data:

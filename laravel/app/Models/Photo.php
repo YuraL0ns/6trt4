@@ -125,7 +125,23 @@ class Photo extends Model
             }
             $basePrice = $this->event ? $this->event->price : 0;
         }
-        return $basePrice * (1 + ($commissionPercent / 100));
+        $priceWithCommission = $basePrice * (1 + ($commissionPercent / 100));
+        
+        // ИСПРАВЛЕНИЕ ОШИБКИ 4: Добавлено логирование расчета цены (только при подозрительных значениях)
+        // Логируем только если цена с комиссией больше базовой более чем на 50% (возможная ошибка)
+        if ($priceWithCommission > $basePrice * 1.5 && $basePrice > 0) {
+            \Log::warning("Photo::getPriceWithCommission: Suspicious price calculation", [
+                'photo_id' => $this->id,
+                'base_price' => $basePrice,
+                'commission_percent' => $commissionPercent,
+                'price_with_commission' => $priceWithCommission,
+                'calculation_formula' => "{$basePrice} * (1 + ({$commissionPercent} / 100)) = {$priceWithCommission}",
+                'photo_price' => $this->price,
+                'event_price' => $this->event ? $this->event->price : null
+            ]);
+        }
+        
+        return $priceWithCommission;
     }
 
     /**

@@ -176,14 +176,21 @@ celery_app.conf.update(
     task_time_limit=7200,  # 2 часа (увеличено для больших событий)
     task_soft_time_limit=6900,  # 1 час 55 минут (увеличено)
     
+    # ИСПРАВЛЕНИЕ ОШИБКИ 2: Переход с solo pool на threads pool для параллелизма
+    # Старый код (закомментирован для возможности отката):
     # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем solo pool вместо prefork
     # InsightFace, OpenCV и ONNX Runtime не работают с prefork
     # solo = один процесс, один поток (безопасно для ML библиотек)
-    worker_pool='solo',  # ВАЖНО: solo вместо prefork для ML библиотек
+    # worker_pool='solo',  # ВАЖНО: solo вместо prefork для ML библиотек
+    
+    # Новый код: Используем threads pool для параллельной обработки
+    # Threads pool совместим с ML библиотеками и позволяет использовать несколько потоков
+    # Это решает проблему блокировки всех запросов во время обработки фотографий
+    worker_pool='threads',  # Используем threads для параллелизма (8 потоков по умолчанию)
     
     worker_prefetch_multiplier=1,  # Обрабатываем по одной задаче за раз для балансировки
-    # worker_max_tasks_per_child не используется с solo pool
-    # worker_max_memory_per_child не используется с solo pool
+    # worker_max_tasks_per_child не используется с threads pool
+    # worker_max_memory_per_child не используется с threads pool
     
     # Оптимизация для балансировки нагрузки
     task_acks_late=True,  # Подтверждаем задачу только после выполнения (предотвращает потерю задач)

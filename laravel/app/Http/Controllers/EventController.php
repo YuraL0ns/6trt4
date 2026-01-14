@@ -276,10 +276,43 @@ class EventController extends Controller
                 );
             }
 
+            // ИСПРАВЛЕНИЕ ОШИБКИ 3: Добавлено логирование ошибок поиска
+            // Старый код не логировал ошибки, которые возвращались из FastAPI
+            // Новый код: Проверяем статус результата и логируем ошибки
+            if (isset($result['status']) && $result['status'] === 'error') {
+                $errorMessage = $result['error'] ?? 'Unknown error';
+                \Log::error("EventController::search: Search error from FastAPI", [
+                    'event_id' => $event->id,
+                    'search_type' => $request->type,
+                    'error' => $errorMessage,
+                    'full_result' => $result,
+                    'image_path' => $imagePath,
+                    'user_id' => Auth::id()
+                ]);
+                
+                // Удаляем временный файл при ошибке
+                if (Storage::disk('public')->exists($imagePath)) {
+                    Storage::disk('public')->delete($imagePath);
+                }
+                
+                return response()->json([
+                    'status' => 'error',
+                    'error' => $errorMessage,
+                    'results' => [],
+                    'total' => 0
+                ], 500);
+            }
+
             // Если задача запущена, сохраняем путь к фото в сессии для последующего сохранения результатов
             if (isset($result['task_id'])) {
                 // Сохраняем путь к загруженному фото в сессии
                 session()->put("search_photo_{$result['task_id']}", $imagePath);
+                
+                \Log::info("EventController::search: Search task started", [
+                    'event_id' => $event->id,
+                    'search_type' => $request->type,
+                    'task_id' => $result['task_id']
+                ]);
                 
                 return response()->json([
                     'task_id' => $result['task_id'],
@@ -296,6 +329,14 @@ class EventController extends Controller
             if (!isset($result['task_id'])) {
                 Storage::disk('public')->delete($imagePath);
             }
+
+            // Логируем успешный результат
+            \Log::info("EventController::search: Search completed successfully", [
+                'event_id' => $event->id,
+                'search_type' => $request->type,
+                'results_count' => count($result['results'] ?? []),
+                'total_found' => $result['total_found'] ?? 0
+            ]);
 
             // Если результат готов
             return response()->json([

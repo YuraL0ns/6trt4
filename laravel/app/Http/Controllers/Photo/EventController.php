@@ -225,6 +225,86 @@ class EventController extends Controller
             ]);
         }
 
+        // ИСПРАВЛЕНИЕ ОШИБКИ 1: Добавлена обработка фотографий при создании события
+        // Старый код не обрабатывал фото - они загружались только через отдельный метод uploadPhotos()
+        // Новый код: Если в запросе есть фото, загружаем их сразу после создания события
+        if ($request->hasFile('photos')) {
+            try {
+                \Log::info("EventController::store: Photos detected in request, starting upload", [
+                    'event_id' => $event->id,
+                    'photos_count' => count($request->file('photos')),
+                    'has_file_photos' => $request->hasFile('photos')
+                ]);
+
+                // Валидация фотографий
+                $request->validate([
+                    'photos' => 'array|max:15000',
+                    'photos.*' => 'image|mimes:jpeg,png,jpg,webp|max:20480', // 20MB
+                ]);
+
+                $files = $request->file('photos');
+                
+                if (!empty($files) && is_array($files)) {
+                    \Log::info("EventController::store: Uploading photos via uploadService", [
+                        'event_id' => $event->id,
+                        'files_count' => count($files)
+                    ]);
+
+                    $result = $this->uploadService->uploadPhotos($event, $files);
+
+                    \Log::info("EventController::store: Photos upload completed", [
+                        'event_id' => $event->id,
+                        'uploaded' => $result['uploaded'],
+                        'errors' => $result['errors'],
+                        'error_details_count' => count($result['error_details'] ?? [])
+                    ]);
+
+                    // Если были ошибки при загрузке, добавляем предупреждение в сообщение
+                    $message = 'Событие создано';
+                    if ($result['uploaded'] > 0) {
+                        $message .= ". Загружено {$result['uploaded']} фотографий";
+                    }
+                    if ($result['errors'] > 0) {
+                        $message .= ". Ошибок при загрузке: {$result['errors']}";
+                    }
+
+                    return redirect()->route('photo.events.show', $event->slug)
+                        ->with('success', $message)
+                        ->with('upload_result', $result);
+                } else {
+                    \Log::warning("EventController::store: Photos array is empty or invalid", [
+                        'event_id' => $event->id,
+                        'files_type' => gettype($files),
+                        'is_array' => is_array($files),
+                        'is_empty' => empty($files)
+                    ]);
+                }
+            } catch (\Illuminate\Validation\ValidationException $e) {
+                \Log::error("EventController::store: Photo validation failed", [
+                    'event_id' => $event->id,
+                    'errors' => $e->errors()
+                ]);
+                // Продолжаем - событие создано, но фото не загружены
+                // Пользователь может загрузить фото позже
+            } catch (\Exception $e) {
+                \Log::error("EventController::store: Error uploading photos", [
+                    'event_id' => $event->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]);
+                // Продолжаем - событие создано, но фото не загружены
+                // Пользователь может загрузить фото позже
+            }
+        } else {
+            \Log::debug("EventController::store: No photos in request", [
+                'event_id' => $event->id,
+                'has_file_photos' => $request->hasFile('photos'),
+                'request_keys' => array_keys($request->all())
+            ]);
+        }
+
         return redirect()->route('photo.events.show', $event->slug)
             ->with('success', 'Событие создано');
     }
@@ -1067,6 +1147,17 @@ class EventController extends Controller
         // Цена с комиссией для пользователя
         $priceWithCommission = $event->price * (1 + ($commissionPercent / 100));
         
+        // ИСПРАВЛЕНИЕ ОШИБКИ 4: Добавлено логирование расчета цены для диагностики
+        // Старый код не логировал расчет цены, что затрудняло диагностику проблем
+        \Log::info("EventController::createEventInfoJson: Price calculation", [
+            'event_id' => $event->id,
+            'base_price' => $event->price,
+            'commission_percent' => $commissionPercent,
+            'price_with_commission' => $priceWithCommission,
+            'calculation_formula' => "{$event->price} * (1 + ({$commissionPercent} / 100)) = {$priceWithCommission}",
+            'commission_amount' => $priceWithCommission - $event->price
+        ]);
+        
         $photoData = [];
 
         foreach ($photos as $photo) {
@@ -1102,7 +1193,23 @@ class EventController extends Controller
             $dockerPath = '/var/www/html/storage/app/public/' . $relativePath;
             
             // Цена фотографии с комиссией (используем цену фото или цену события)
-            $photoPriceWithCommission = ($photo->price ?: $event->price) * (1 + ($commissionPercent / 100));
+            $photoBasePrice = $photo->price ?: $event->price;
+            $photoPriceWithCommission = $photoBasePrice * (1 + ($commissionPercent / 100));
+            
+            // ИСПРАВЛЕНИЕ ОШИБКИ 4: Логирование расчета цены для каждой фотографии
+            // Это поможет диагностировать проблемы с неправильными ценами
+            if ($photo->id === $photos->first()->id) { // Логируем только для первой фото, чтобы не засорять логи
+                \Log::info("EventController::createEventInfoJson: Photo price calculation example", [
+                    'event_id' => $event->id,
+                    'photo_id' => $photo->id,
+                    'photo_base_price' => $photo->price,
+                    'event_base_price' => $event->price,
+                    'used_base_price' => $photoBasePrice,
+                    'commission_percent' => $commissionPercent,
+                    'photo_price_with_commission' => $photoPriceWithCommission,
+                    'calculation_formula' => "{$photoBasePrice} * (1 + ({$commissionPercent} / 100)) = {$photoPriceWithCommission}"
+                ]);
+            }
             
             $photoData[$photo->original_name] = [
                 'id' => $photo->id,
