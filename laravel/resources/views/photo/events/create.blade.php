@@ -35,15 +35,27 @@
             
             <div class="mb-4">
                 <label for="cover" class="block text-sm font-medium text-gray-300 mb-2">
-                    Обложка <span class="text-red-500">*</span>
+                    Обложка
                 </label>
-                <div class="flex items-center gap-4">
+                <div class="mb-3">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            name="create_without_cover" 
+                            id="create_without_cover"
+                            value="1"
+                            class="w-4 h-4 text-[#a78bfa] bg-[#121212] border-gray-700 rounded focus:ring-[#a78bfa]"
+                        >
+                        <span class="text-sm text-gray-300">Создать событие без обложки (для отложенной загрузки фотографий)</span>
+                    </label>
+                    <p class="mt-1 text-xs text-gray-500">Если отмечено, событие будет создано без обложки. Вы сможете загрузить фотографии позже по ссылке события.</p>
+                </div>
+                <div class="flex items-center gap-4" id="cover-upload-section">
                     <input 
                         type="file" 
                         name="cover" 
                         id="cover"
                         accept="image/jpeg,image/jpg,image/png" 
-                        required
                         style="display: none;"
                     >
                     <button 
@@ -168,6 +180,33 @@
         }, 300);
         
         console.log('[COVER] Initialized');
+        
+        // Обработка чекбокса "Создать без обложки"
+        const createWithoutCoverCheckbox = document.getElementById('create_without_cover');
+        const coverUploadSection = document.getElementById('cover-upload-section');
+        const coverInput = document.getElementById('cover');
+        
+        if (createWithoutCoverCheckbox && coverUploadSection) {
+            createWithoutCoverCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    coverUploadSection.style.display = 'none';
+                    coverInput.removeAttribute('required');
+                    if (coverInput.files && coverInput.files.length > 0) {
+                        coverInput.value = '';
+                        if (coverButton) {
+                            coverButton.textContent = 'Выбрать файл';
+                            coverButton.classList.remove('bg-green-600');
+                            coverButton.classList.add('bg-[#a78bfa]');
+                        }
+                        if (coverSelectedName) coverSelectedName.textContent = '';
+                        if (filenameDisplay) filenameDisplay.textContent = '';
+                    }
+                } else {
+                    coverUploadSection.style.display = 'flex';
+                    coverInput.setAttribute('required', 'required');
+                }
+            });
+        }
     }
     
     if (document.readyState === 'loading') {

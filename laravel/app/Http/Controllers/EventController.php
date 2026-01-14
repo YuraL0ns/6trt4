@@ -60,11 +60,29 @@ class EventController extends Controller
     public function show(string $slug)
     {
         try {
-            // Показываем только опубликованные события (не архивированные)
-            $event = Event::where('status', 'published')
-                ->where('slug', $slug)
-                ->with(['author', 'photos'])
-                ->firstOrFail();
+            // Администраторы и авторы могут просматривать все события, остальные - только опубликованные
+            $query = Event::where('slug', $slug)
+                ->with(['author', 'photos']);
+            
+            // Если пользователь не администратор и не автор события, показываем только опубликованные события
+            if (Auth::check()) {
+                $user = Auth::user();
+                if (!$user->isAdmin()) {
+                    // Разрешаем автору видеть свои черновики
+                    $query->where(function($q) use ($user) {
+                        $q->where('status', 'published')
+                          ->orWhere(function($subQ) use ($user) {
+                              $subQ->where('status', 'draft')
+                                   ->where('author_id', $user->id);
+                          });
+                    });
+                }
+            } else {
+                // Неавторизованные пользователи видят только опубликованные события
+                $query->where('status', 'published');
+            }
+            
+            $event = $query->firstOrFail();
 
         // Синхронизируем цены из event_info.json если они не установлены
         // Это нужно для событий, которые были опубликованы до добавления синхронизации
@@ -142,9 +160,15 @@ class EventController extends Controller
      */
     public function getPhoto(string $slug, string $photoId)
     {
-        $event = Event::where('status', 'published')
-            ->where('slug', $slug)
-            ->firstOrFail();
+        // Администраторы могут просматривать фото всех событий, остальные - только опубликованных
+        $query = Event::where('slug', $slug);
+        
+        // Если пользователь не администратор, показываем только опубликованные события
+        if (!Auth::check() || !Auth::user()->isAdmin()) {
+            $query->where('status', 'published');
+        }
+        
+        $event = $query->firstOrFail();
 
         $photo = Photo::where('event_id', $event->id)
             ->where('id', $photoId)
@@ -171,9 +195,15 @@ class EventController extends Controller
      */
     public function getPhotoProxy(string $slug, string $photoId)
     {
-        $event = Event::where('status', 'published')
-            ->where('slug', $slug)
-            ->firstOrFail();
+        // Администраторы могут просматривать фото всех событий, остальные - только опубликованных
+        $query = Event::where('slug', $slug);
+        
+        // Если пользователь не администратор, показываем только опубликованные события
+        if (!Auth::check() || !Auth::user()->isAdmin()) {
+            $query->where('status', 'published');
+        }
+        
+        $event = $query->firstOrFail();
 
         $photo = Photo::where('event_id', $event->id)
             ->where('id', $photoId)

@@ -75,13 +75,23 @@ class EventController extends Controller
             'content_length' => $request->header('Content-Length')
         ]);
         
-        $request->validate([
+        // Валидация: обложка обязательна только если не отмечен чекбокс "создать без обложки"
+        $rules = [
             'title' => 'required|string|max:255',
             'city' => 'required|string|max:255',
             'date' => 'required|date',
-            'cover' => 'required|image|mimes:jpeg,png,jpg|max:10240',
             'description' => 'nullable|string|max:5000',
-        ]);
+            'create_without_cover' => 'nullable|boolean',
+        ];
+        
+        // Если не отмечен чекбокс "создать без обложки", обложка обязательна
+        if (!$request->has('create_without_cover') || !$request->boolean('create_without_cover')) {
+            $rules['cover'] = 'required|image|mimes:jpeg,png,jpg|max:10240';
+        } else {
+            $rules['cover'] = 'nullable|image|mimes:jpeg,png,jpg|max:10240';
+        }
+        
+        $request->validate($rules);
 
         \Log::info("EventController::store: Validation passed, starting event creation", [
             'user_id' => Auth::id(),
@@ -141,33 +151,125 @@ class EventController extends Controller
             }
         }
 
-        // Создаем путь для обложки: /storage/events/{event_uuid}/covers/
+        // Обрабатываем обложку только если она загружена
+        if ($request->hasFile('cover')) {
+            // Создаем путь для обложки: /storage/events/{event_uuid}/covers/
+            $coverDirectory = "events/{$event->id}/covers";
+            $coverFilename = uniqid() . '_' . time() . '.' . $request->file('cover')->getClientOriginalExtension();
+            $coverPath = "{$coverDirectory}/{$coverFilename}";
+            $fullCoverPath = storage_path('app/public/' . $coverPath);
+            
+            // Создаем директорию для обложки
+            $fullCoverDirectory = storage_path('app/public/' . $coverDirectory);
+            if (!file_exists($fullCoverDirectory)) {
+                mkdir($fullCoverDirectory, 0755, true);
+                \Log::info("EventController::store: Created cover directory", [
+                    'event_id' => $event->id,
+                    'directory' => $fullCoverDirectory
+                ]);
+            }
+
+            // Сохраняем временную копию обложки для отправки в FastAPI
+            $coverFile = $request->file('cover');
+            $tempCoverPath = $coverFile->storeAs($coverDirectory, $coverFilename, 'public');
+            $tempFullCoverPath = storage_path('app/public/' . $tempCoverPath);
+
+            \Log::info("EventController::store: Processing cover via FastAPI", [
+                'event_id' => $event->id,
+                'cover_path' => $coverPath,
+                'full_cover_path' => $fullCoverPath,
+                'temp_path' => $tempFullCoverPath
+            ]);
+
+            try {
+                // Отправляем обложку в FastAPI для обработки
+                $this->processEventCoverViaFastAPI($event, $tempFullCoverPath, $fullCoverPath);
+                
+                // Обновляем путь обложки в событии
+                $event->update(['cover_path' => $coverPath]);
+                
+                // Удаляем временный файл
+                if (file_exists($tempFullCoverPath) && $tempFullCoverPath !== $fullCoverPath) {
+                    @unlink($tempFullCoverPath);
+                }
+                
+                \Log::info("EventController::store: Cover processed successfully", [
+                    'event_id' => $event->id,
+                    'cover_path' => $coverPath,
+                    'file_exists' => file_exists($fullCoverPath),
+                    'file_size' => file_exists($fullCoverPath) ? filesize($fullCoverPath) : 0
+                ]);
+            } catch (\Exception $e) {
+                \Log::error("EventController::store: Error processing cover", [
+                    'event_id' => $event->id,
+                    'cover_path' => $coverPath,
+                    'full_cover_path' => $fullCoverPath,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]);
+                
+                // Если обработка не удалась, используем оригинальный файл
+                if (file_exists($tempFullCoverPath)) {
+                    $event->update(['cover_path' => $tempCoverPath]);
+                    \Log::warning("EventController::store: Using original cover file", [
+                        'event_id' => $event->id,
+                        'cover_path' => $tempCoverPath
+                    ]);
+                }
+            }
+        } else {
+            \Log::info("EventController::store: Event created without cover (scheduled event)", [
+                'event_id' => $event->id
+            ]);
+        }
+
+        return redirect()->route('photo.events.show', $event->slug)
+            ->with('success', 'Событие создано');
+    }
+
+    /**
+     * Загрузить обложку для события (для отложенных событий)
+     */
+    public function uploadCover(Request $request, Event $event)
+    {
+        // Проверяем права доступа
+        if (Auth::user()->isPhotographer() && $event->author_id !== Auth::id()) {
+            abort(403, 'Доступ запрещен');
+        }
+
+        $request->validate([
+            'cover' => 'required|image|mimes:jpeg,png,jpg|max:10240',
+        ]);
+
+        // Создаем структуру папок для события, если их нет
+        $directories = [
+            "events/{$event->id}/covers"
+        ];
+        
+        foreach ($directories as $dir) {
+            if (!Storage::disk('public')->exists($dir)) {
+                Storage::disk('public')->makeDirectory($dir);
+            }
+        }
+
+        // Создаем путь для обложки
         $coverDirectory = "events/{$event->id}/covers";
         $coverFilename = uniqid() . '_' . time() . '.' . $request->file('cover')->getClientOriginalExtension();
         $coverPath = "{$coverDirectory}/{$coverFilename}";
         $fullCoverPath = storage_path('app/public/' . $coverPath);
-        
+
         // Создаем директорию для обложки
         $fullCoverDirectory = storage_path('app/public/' . $coverDirectory);
         if (!file_exists($fullCoverDirectory)) {
             mkdir($fullCoverDirectory, 0755, true);
-            \Log::info("EventController::store: Created cover directory", [
-                'event_id' => $event->id,
-                'directory' => $fullCoverDirectory
-            ]);
         }
 
         // Сохраняем временную копию обложки для отправки в FastAPI
         $coverFile = $request->file('cover');
         $tempCoverPath = $coverFile->storeAs($coverDirectory, $coverFilename, 'public');
         $tempFullCoverPath = storage_path('app/public/' . $tempCoverPath);
-
-        \Log::info("EventController::store: Processing cover via FastAPI", [
-            'event_id' => $event->id,
-            'cover_path' => $coverPath,
-            'full_cover_path' => $fullCoverPath,
-            'temp_path' => $tempFullCoverPath
-        ]);
 
         try {
             // Отправляем обложку в FastAPI для обработки
@@ -181,35 +283,29 @@ class EventController extends Controller
                 @unlink($tempFullCoverPath);
             }
             
-            \Log::info("EventController::store: Cover processed successfully", [
+            \Log::info("EventController::uploadCover: Cover uploaded successfully", [
                 'event_id' => $event->id,
                 'cover_path' => $coverPath,
-                'file_exists' => file_exists($fullCoverPath),
-                'file_size' => file_exists($fullCoverPath) ? filesize($fullCoverPath) : 0
             ]);
         } catch (\Exception $e) {
-            \Log::error("EventController::store: Error processing cover", [
+            \Log::error("EventController::uploadCover: Error processing cover", [
                 'event_id' => $event->id,
-                'cover_path' => $coverPath,
-                'full_cover_path' => $fullCoverPath,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
             ]);
             
             // Если обработка не удалась, используем оригинальный файл
             if (file_exists($tempFullCoverPath)) {
                 $event->update(['cover_path' => $tempCoverPath]);
-                \Log::warning("EventController::store: Using original cover file", [
+                \Log::warning("EventController::uploadCover: Using original cover file", [
                     'event_id' => $event->id,
                     'cover_path' => $tempCoverPath
                 ]);
+            } else {
+                return back()->with('error', 'Ошибка при загрузке обложки. Попробуйте еще раз.');
             }
         }
 
-        return redirect()->route('photo.events.show', $event->slug)
-            ->with('success', 'Событие создано');
+        return back()->with('success', 'Обложка успешно загружена');
     }
 
     /**

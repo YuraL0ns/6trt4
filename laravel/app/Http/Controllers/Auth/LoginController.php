@@ -73,4 +73,27 @@ class LoginController extends Controller
             'password' => $request->input('password'),
         ];
     }
+
+    /**
+     * The user has been authenticated.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  mixed  $user
+     * @return mixed
+     */
+    protected function authenticated(\Illuminate\Http\Request $request, $user)
+    {
+        // Редиректим на главную страницу с флагом успешного логина
+        return redirect()->route('home')->with('login_success', true);
+    }
+
+    /**
+     * Get the post-login redirect path.
+     *
+     * @return string
+     */
+    protected function redirectTo()
+    {
+        return route('home');
+    }
 }

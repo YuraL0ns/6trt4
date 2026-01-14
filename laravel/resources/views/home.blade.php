@@ -4,6 +4,17 @@
 @section('page-title', 'Главная')
 
 @section('content')
+    @if(session('login_success') && auth()->check())
+        <x-alert type="success" class="mb-6">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                <span class="font-semibold">Добро пожаловать, {{ auth()->user()->first_name ?? auth()->user()->name ?? auth()->user()->email }}!</span>
+            </div>
+        </x-alert>
+    @endif
+    
     <!-- Hero Section -->
     <div class="mb-8">
         <div class="bg-gradient-to-r from-[#a78bfa] to-[#8b5cf6] rounded-lg p-8 text-center">

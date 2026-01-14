@@ -94,10 +94,10 @@
     <!-- Обложка и статус анализа (рядом) -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
         <!-- Обложка события (6 колонок) -->
-        @if($event->cover_path)
-            <div class="lg:col-span-6">
-                <x-card>
-                    <h3 class="text-lg font-semibold text-white mb-4">Обложка события</h3>
+        <div class="lg:col-span-6">
+            <x-card>
+                <h3 class="text-lg font-semibold text-white mb-4">Обложка события</h3>
+                @if($event->cover_path)
                     <div class="aspect-video bg-gray-800 rounded-lg overflow-hidden">
                         @php
                             $coverPath = $event->cover_path;
@@ -127,9 +127,47 @@
                             </div>
                         @endif
                     </div>
-                </x-card>
-            </div>
-        @endif
+                @else
+                    <!-- Форма загрузки обложки для отложенного события -->
+                    <div class="border-2 border-dashed border-gray-700 rounded-lg p-6">
+                        <form action="{{ route('photo.events.upload-cover', $event->slug) }}" method="POST" enctype="multipart/form-data" id="cover-upload-form">
+                            @csrf
+                            <div class="text-center">
+                                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <p class="mt-2 text-sm text-gray-300">Обложка не загружена</p>
+                                <p class="mt-1 text-xs text-gray-500">Загрузите обложку для события</p>
+                                <div class="mt-4">
+                                    <input 
+                                        type="file" 
+                                        name="cover" 
+                                        id="cover-input"
+                                        accept="image/jpeg,image/jpg,image/png" 
+                                        required
+                                        class="hidden"
+                                        onchange="document.getElementById('cover-filename').textContent = this.files[0] ? 'Выбран: ' + this.files[0].name : ''"
+                                    >
+                                    <label for="cover-input" class="cursor-pointer inline-flex items-center px-4 py-2 bg-[#a78bfa] hover:bg-[#8b5cf6] text-white rounded-lg transition-colors">
+                                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                                        </svg>
+                                        Выбрать файл
+                                    </label>
+                                    <p id="cover-filename" class="mt-2 text-sm text-gray-400"></p>
+                                </div>
+                                <div class="mt-4">
+                                    <button type="submit" class="px-4 py-2 bg-[#a78bfa] hover:bg-[#8b5cf6] text-white rounded-lg transition-colors">
+                                        Загрузить обложку
+                                    </button>
+                                </div>
+                                <p class="mt-2 text-xs text-gray-500">Максимальный размер: 10 МБ. Форматы: JPEG, PNG</p>
+                            </div>
+                        </form>
+                    </div>
+                @endif
+            </x-card>
+        </div>
 
         <!-- Статус анализа (6 колонок, или 12 если обложки нет) -->
         <div class="{{ $event->cover_path ? 'lg:col-span-6' : 'lg:col-span-12' }}" id="analysis-status-card-wrapper">
@@ -335,7 +373,8 @@
                     <x-checkbox label="Удаление EXIF данных" name="analyses[remove_exif]" :checked="true" :disabled="true" />
                     <x-checkbox label="Нанесение водяного знака" name="analyses[watermark]" :checked="true" :disabled="true" />
                     <x-checkbox label="Поиск лиц" name="analyses[face_search]" />
-                    <x-checkbox label="Поиск номеров" name="analyses[number_search]" />
+                    <!-- Поиск номеров временно отключен -->
+                    <input type="hidden" name="analyses[number_search]" value="0">
                 </div>
                 <p class="text-xs text-gray-400 mt-2">Удаление EXIF и нанесение водяного знака выполняются всегда</p>
             </div>

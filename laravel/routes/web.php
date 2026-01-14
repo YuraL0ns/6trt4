@@ -110,6 +110,7 @@ Route::middleware(['auth', 'group:photo'])->prefix('photo')->name('photo.')->gro
     Route::post('/events', [App\Http\Controllers\Photo\EventController::class, 'store'])->name('events.store');
     Route::get('/events/{event:slug}', [App\Http\Controllers\Photo\EventController::class, 'show'])->name('events.show');
     Route::post('/events/{event:slug}/upload', [App\Http\Controllers\Photo\EventController::class, 'uploadPhotos'])->name('events.upload');
+    Route::post('/events/{event:slug}/upload-cover', [App\Http\Controllers\Photo\EventController::class, 'uploadCover'])->name('events.upload-cover');
     Route::get('/events/{event:slug}/upload-progress', [App\Http\Controllers\Photo\EventController::class, 'uploadProgress'])->name('events.upload-progress');
     Route::post('/events/{event:slug}/start-analysis', [App\Http\Controllers\Photo\EventController::class, 'startAnalysis'])->name('events.start-analysis');
     Route::get('/events/{event:slug}/status', [App\Http\Controllers\Photo\EventController::class, 'analysisStatus'])->name('events.status');

@@ -65,8 +65,9 @@ class OrderController extends Controller
         }
 
         // Если пользователь авторизован, проверяем что это его заказ
+        // Администраторы имеют доступ ко всем заказам
         if (Auth::check()) {
-            if ($order->user_id && $order->user_id !== Auth::id()) {
+            if (!Auth::user()->isAdmin() && $order->user_id && $order->user_id !== Auth::id()) {
                 abort(403);
             }
         } else {

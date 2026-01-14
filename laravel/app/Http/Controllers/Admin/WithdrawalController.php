@@ -100,6 +100,12 @@ class WithdrawalController extends Controller
         $userId = $withdrawal->photographer_id;
         $receiptPath = $request->file('receipt')->store("withdrawals/{$userId}", 'public');
 
+        // Убеждаемся, что файл действительно сохранен
+        $fullPath = storage_path('app/public/' . $receiptPath);
+        if (!file_exists($fullPath)) {
+            return back()->with('error', 'Ошибка при сохранении чека. Попробуйте еще раз.');
+        }
+
         // Получаем процент налога с вывода
         $taxPercent = \App\Models\Setting::get('percent_for_salary', 6);
         
@@ -122,6 +128,9 @@ class WithdrawalController extends Controller
             'tax_amount' => $taxAmount,
             'final_amount' => $finalAmount,
         ]);
+        
+        // Обновляем модель, чтобы получить актуальные данные
+        $withdrawal->refresh();
 
         // Создаем уведомление для фотографа
         \App\Services\NotificationService::withdrawalApproved(

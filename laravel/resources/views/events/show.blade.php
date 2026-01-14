@@ -201,7 +201,7 @@
                     <div 
                         id="photo-{{ $photo->id }}"
                         class="group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer photo-item" 
-                        onclick="openPhotoModal('{{ $photo->id }}')"
+                        onclick="openPhotoModal('{{ $photo->id }}', currentFilterNumber !== null)"
                         data-photo-id="{{ $photo->id }}"
                         data-numbers="{{ json_encode($photo->numbers ?? []) }}"
                         @if($photoTimeMinutes !== null)
@@ -284,6 +284,8 @@
 // Глобальные переменные для навигации
 let currentPhotoIndex = -1;
 let photoIds = @json($photos->pluck('id')->toArray());
+let searchResultPhotoIds = null; // Массив ID фото из результатов поиска (для отдельного слайдера)
+let isNavigatingSearchResults = false; // Флаг: навигация по результатам поиска или по всем фото
 let isLoadingPhoto = false; // Флаг для предотвращения множественных загрузок
 
 // Проверяем hash в URL при загрузке страницы для открытия конкретной фотографии
@@ -303,16 +305,30 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-function openPhotoModal(photoId) {
-    // Находим индекс текущей фотографии
-    currentPhotoIndex = photoIds.indexOf(photoId);
-    
-    // Если фотография не найдена в основном списке (например, из похожих результатов),
-    // добавляем её во временный список для навигации
-    if (currentPhotoIndex === -1) {
-        console.log('Photo ID not found in main list, adding temporarily:', photoId);
-        photoIds.push(photoId);
-        currentPhotoIndex = photoIds.length - 1;
+function openPhotoModal(photoId, useSearchResults = false) {
+    // Определяем, какой массив использовать для навигации
+    if (useSearchResults && searchResultPhotoIds && searchResultPhotoIds.length > 0) {
+        // Используем массив результатов поиска
+        currentPhotoIndex = searchResultPhotoIds.indexOf(photoId);
+        isNavigatingSearchResults = true;
+        
+        if (currentPhotoIndex === -1) {
+            console.log('Photo ID not found in search results, adding temporarily:', photoId);
+            searchResultPhotoIds.push(photoId);
+            currentPhotoIndex = searchResultPhotoIds.length - 1;
+        }
+    } else {
+        // Используем основной массив всех фото
+        currentPhotoIndex = photoIds.indexOf(photoId);
+        isNavigatingSearchResults = false;
+        
+        // Если фотография не найдена в основном списке (например, из похожих результатов),
+        // добавляем её во временный список для навигации
+        if (currentPhotoIndex === -1) {
+            console.log('Photo ID not found in main list, adding temporarily:', photoId);
+            photoIds.push(photoId);
+            currentPhotoIndex = photoIds.length - 1;
+        }
     }
     
     // Открываем модальное окно, если оно закрыто
@@ -382,6 +398,27 @@ function loadPhoto(photoId) {
                 </button>`;
             }
             
+            // Определяем активный массив для навигации
+            const activePhotoIds = isNavigatingSearchResults && searchResultPhotoIds ? searchResultPhotoIds : photoIds;
+            
+            // Показываем/скрываем кнопки навигации
+            const prevBtn = document.getElementById('prev-photo-btn');
+            const nextBtn = document.getElementById('next-photo-btn');
+            if (prevBtn) {
+                if (currentPhotoIndex > 0 && activePhotoIds.length > 1) {
+                    prevBtn.classList.remove('hidden');
+                } else {
+                    prevBtn.classList.add('hidden');
+                }
+            }
+            if (nextBtn) {
+                if (currentPhotoIndex < activePhotoIds.length - 1 && activePhotoIds.length > 1) {
+                    nextBtn.classList.remove('hidden');
+                } else {
+                    nextBtn.classList.add('hidden');
+                }
+            }
+            
             document.getElementById('photo-modal-content').innerHTML = `
                 ${imgTag}
                 ${errorDiv}
@@ -391,10 +428,6 @@ function loadPhoto(photoId) {
                         ${data.numbers ? `<p class="text-sm text-gray-400 mt-1">Номера: ${data.numbers.join(', ')}</p>` : ''}
                     </div>
                     ${cartButton}
-                </div>
-                <div class="flex space-x-2 mb-6">
-                    ${data.has_faces ? '<button onclick="findSimilar(\'' + photoId + '\', \'face\')" class="px-4 py-2 border border-gray-700 hover:bg-gray-800 text-white font-semibold rounded-lg transition-colors">Показать похожие (по лицам)</button>' : ''}
-                    ${data.numbers ? '<button onclick="findSimilar(\'' + photoId + '\', \'number\')" class="px-4 py-2 border border-gray-700 hover:bg-gray-800 text-white font-semibold rounded-lg transition-colors">Показать похожие (по номерам)</button>' : ''}
                 </div>
                 <!-- Блок "Схожие фото" -->
                 <div id="modal-similar-photos" class="mt-6 border-t border-gray-700 pt-6">
@@ -409,22 +442,6 @@ function loadPhoto(photoId) {
             
             // Загружаем похожие фотографии при открытии модального окна
             loadSimilarPhotosInModal(photoId, data);
-            
-            // Показываем/скрываем кнопки навигации
-            const prevBtn = document.getElementById('prev-photo-btn');
-            const nextBtn = document.getElementById('next-photo-btn');
-            
-            if (currentPhotoIndex > 0) {
-                prevBtn.classList.remove('hidden');
-            } else {
-                prevBtn.classList.add('hidden');
-            }
-            
-            if (currentPhotoIndex < photoIds.length - 1) {
-                nextBtn.classList.remove('hidden');
-            } else {
-                nextBtn.classList.add('hidden');
-            }
             
             document.getElementById('photo-modal').classList.remove('hidden');
             
@@ -461,10 +478,13 @@ function navigatePhoto(direction) {
         return;
     }
     
+    // Выбираем правильный массив в зависимости от контекста
+    const activePhotoIds = isNavigatingSearchResults && searchResultPhotoIds ? searchResultPhotoIds : photoIds;
+    
     const newIndex = currentPhotoIndex + direction;
-    if (newIndex >= 0 && newIndex < photoIds.length) {
+    if (newIndex >= 0 && newIndex < activePhotoIds.length) {
         currentPhotoIndex = newIndex;
-        loadPhoto(photoIds[currentPhotoIndex]);
+        loadPhoto(activePhotoIds[currentPhotoIndex]);
     }
 }
 
@@ -1190,11 +1210,15 @@ async function showSearchResults(results, total) {
             return;
         }
         
+        // Сохраняем массив ID найденных фото для навигации в модальном окне
+        searchResultPhotoIds = validPhotos.map(p => p.id);
+        console.log('Search results photo IDs saved for navigation:', searchResultPhotoIds);
+        
         // Создаем элементы для каждой фотографии (показываем все найденные)
         validPhotos.forEach((photo, index) => {
             const photoElement = document.createElement('div');
             photoElement.className = 'group relative aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer';
-            photoElement.onclick = () => openPhotoModal(photo.id);
+            photoElement.onclick = () => openPhotoModal(photo.id, true); // Передаем true для использования результатов поиска
             
             const similarityPercent = Math.round(photo.similarity * 100);
             const similarityColor = similarityPercent >= 80 ? 'bg-green-500' : (similarityPercent >= 60 ? 'bg-yellow-500' : 'bg-orange-500');
@@ -1249,6 +1273,9 @@ function filterByNumber(number) {
     // Показываем кнопку сброса фильтра
     document.getElementById('clear-filter-btn').style.display = 'inline-block';
     
+    // Сохраняем массив отфильтрованных фото для навигации
+    const filteredPhotoIds = [];
+    
     // Фильтруем фотографии
     document.querySelectorAll('.photo-item').forEach(item => {
         const numbers = JSON.parse(item.dataset.numbers || '[]');
@@ -1256,10 +1283,18 @@ function filterByNumber(number) {
         
         if (hasNumber) {
             item.style.display = 'block';
+            const photoId = item.dataset.photoId;
+            if (photoId) {
+                filteredPhotoIds.push(photoId);
+            }
         } else {
             item.style.display = 'none';
         }
     });
+    
+    // Сохраняем массив для навигации
+    searchResultPhotoIds = filteredPhotoIds;
+    console.log('Filtered photo IDs saved for navigation:', searchResultPhotoIds);
 }
 
 function clearNumberFilter() {
@@ -1273,6 +1308,10 @@ function clearNumberFilter() {
     
     // Скрываем кнопку сброса фильтра
     document.getElementById('clear-filter-btn').style.display = 'none';
+    
+    // Сбрасываем массив результатов поиска
+    searchResultPhotoIds = null;
+    isNavigatingSearchResults = false;
     
     // Показываем все фотографии
     document.querySelectorAll('.photo-item').forEach(item => {

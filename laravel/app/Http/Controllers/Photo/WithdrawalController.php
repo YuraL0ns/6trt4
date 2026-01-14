@@ -183,9 +183,18 @@ class WithdrawalController extends Controller
         $receiptPath = $request->file('receipt_photographer')
             ->store("withdrawals/{$userId}", 'public');
         
+        // Убеждаемся, что файл действительно сохранен
+        $fullPath = storage_path('app/public/' . $receiptPath);
+        if (!file_exists($fullPath)) {
+            return back()->with('error', 'Ошибка при сохранении чека. Попробуйте еще раз.');
+        }
+        
         $withdrawal->update([
             'receipt_path_photographer' => $receiptPath,
         ]);
+        
+        // Обновляем модель, чтобы получить актуальные данные
+        $withdrawal->refresh();
         
         return back()->with('success', 'Чек успешно загружен');
     }
